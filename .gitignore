@@ -1,0 +1,41 @@
+# ── Secrets (NEVER commit) ──────────────────────────────────────────
+chatgpt-api-key.txt
+*api-key*.txt
+gpt-api.txt
+.env
+.env.*
+*.key
+
+# ── Python ──────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / frontend ─────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ── App data (local SRS DB + cached transcripts) ────────────────────
+backend/app.db
+backend/app.db-*
+data/
+*.sqlite
+*.sqlite3
+
+# ── Generated reports / scratch ─────────────────────────────────────
+backend/sim_week_report.md
+backend/realapi_result.txt
+
+# ── The Anki fork (reference only; not part of the app, has its own git) ──
+anki/
+
+# ── OS / editor ─────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
