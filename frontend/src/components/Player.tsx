@@ -89,13 +89,30 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onSav
     };
   }, [youtubeId, startS, endS, mode]);
 
+  const lineBlocks = useMemo<Block[]>(
+    () => cues.map((c) => ({ start_s: c.start_s, end_s: c.start_s + c.dur_s, text: c.text.trim() })),
+    [cues],
+  );
   const sentences = useMemo(() => groupIntoSentences(cues), [cues]);
+  const items = unit === "line" ? lineBlocks : sentences;
   // +offset = subtitles appear later; -offset = earlier.
   const t = time - offset;
-  const active: Block | undefined =
-    unit === "line"
-      ? cues.find((c) => t >= c.start_s && t < c.start_s + c.dur_s)
-      : sentences.find((b) => t >= b.start_s && t < b.end_s);
+  // Show the most recently STARTED caption and switch the instant the next one
+  // begins. YouTube auto-caption durations overlap and run long, so matching by
+  // [start, start+dur] kept an old line up and delayed the next one.
+  const active = useMemo<Block | undefined>(() => {
+    let idx = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].start_s <= t) idx = i;
+      else break;
+    }
+    if (idx < 0) return undefined;
+    const cur = items[idx];
+    const nextStart = items[idx + 1]?.start_s ?? Infinity;
+    // visible until the next caption starts, but hide ~1s into a real silence
+    const visibleUntil = Math.min(nextStart, cur.end_s + 1.0);
+    return t < visibleUntil ? cur : undefined;
+  }, [items, t]);
 
   const progress = Math.min(100, Math.max(0, ((time - startS) / (endS - startS)) * 100));
 

@@ -56,7 +56,8 @@ SYSTEM_PROMPT = (
     "in tone or formality. It is a mental blueprint of the plot.\n"
     '- "chunks": an array of EXACTLY 15 lexical chunks extracted AS THEY APPEAR '
     "in the dialogue (NOT dictionary form), split as:\n"
-    f"    * {PER_TYPE} with type \"sentence\": full, high-frequency sentences useful in daily conversation.\n"
+    f"    * {PER_TYPE} with type \"sentence\": SHORT, simple, high-frequency sentences "
+    "(aim for ~3-6 words; avoid long or complex sentences) useful in daily conversation.\n"
     f"    * {PER_TYPE} with type \"noun_verb\": a common noun attached to its natural verb (a collocation).\n"
     f"    * {PER_TYPE} with type \"grammar\": a verb phrase highlighting ONE specific grammatical ending or particle used in the segment.\n"
     'Each chunk object has keys {"type","ko","en","gloss"}: ko = Korean exactly as '
