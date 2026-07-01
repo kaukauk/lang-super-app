@@ -13,10 +13,11 @@ import json
 import sys
 from typing import Any
 
-from . import db
+from . import config, db
+from .anki.connect import AnkiConnectClient
 from .llm import FakeLLM, OpenAIClient  # noqa: F401
 from .llm.fake import DemoLLM
-from .services import anki_io, extraction, ingest, sparring, srs
+from .services import anki_io, avcards, extraction, ingest, media, sparring, srs, transcribe, tts
 
 
 def _print(obj: Any) -> None:
@@ -132,11 +133,15 @@ def cmd_spar(args):
     targets, support = _targets_and_support(args.deck)
     if args.targets:
         targets = args.targets
+    sess = sparring.get_session(args.session)
+    role = sess.role_en if sess else ""
+    scene = args.scene or (sess.scene_en if sess else "")
     history = sparring.session_history(args.session)
     sparring.record_turn(args.session, "user", text_ko=args.text)
     resp = sparring.spar_turn(
         user_text=args.text, provider=_provider(args), targets=targets,
-        support=support, scene=args.scene or "", history=history, model=args.model,
+        support=support, scene=scene, history=history, model=args.model,
+        role=role, wind_down=args.wind_down,
     )
     sparring.record_turn(args.session, "assistant", text_ko=resp.reply_ko,
                          glosses=resp.glosses, targets_used=resp.targets_used)
@@ -160,6 +165,49 @@ def cmd_harvest(args):
         cards = extraction.accept_chunks(chunks, today_ord=args.today, deck_name=args.deck)
         out["accepted_card_ids"] = [c.id for c in cards]
     _print(out)
+
+
+# --- media / AV cards / anki ---------------------------------------------
+
+def cmd_media_fetch(args):
+    vp = media.ensure_video(args.id, url=args.url, section=args.section)
+    _print({"youtube_id": vp.youtube_id, "video": str(vp.video),
+            "duration_s": round(vp.duration_s, 1)})
+
+
+def cmd_anki_check(args):
+    client = AnkiConnectClient()
+    out = {"url": client.url, "version": client.version(),
+           "decks": client.invoke("deckNames"),
+           "models": client.invoke("modelNames")}
+    _print(out)
+
+
+def cmd_build_av(args):
+    llm = _provider(args)
+    transcriber = transcribe.FakeTranscriber() if args.fake else transcribe.WhisperTranscriber()
+    tts_provider = tts.FakeTTS() if args.fake else tts.EdgeTTS()
+    # --fake is fully offline: no ffmpeg/yt-dlp, no Anki.
+    make_media = not (args.no_media or args.fake)
+    push = not (args.no_push or args.fake)
+    anki = None if not push else AnkiConnectClient()
+    res = avcards.build_av_cards(
+        args.segment_id, llm=llm, transcriber=transcriber, tts_provider=tts_provider,
+        anki=anki, make_media=make_media, push=push, replace=args.replace,
+        model=args.model, url=args.url, section=args.section)
+    _print(res.as_dict())
+
+
+def cmd_primer(args):
+    _print(avcards.primer_for_segment(args.segment_id))
+
+
+def cmd_spar_open(args):
+    opening = sparring.spar_open(args.session, provider=_provider(args),
+                                 segment_id=args.segment, model=args.model)
+    _print({"anchor_ko": opening.anchor_ko, "role_en": opening.role_en,
+            "prompt_en": opening.prompt_en, "scene_en": opening.scene_en,
+            "glosses": opening.glosses})
 
 
 # --- argument parser -----------------------------------------------------
@@ -216,13 +264,36 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("spar-start"); sp.add_argument("--segment", type=int, default=None)
     sp.set_defaults(func=cmd_spar_start)
 
+    sp = sub.add_parser("spar-open"); sp.add_argument("session", type=int)
+    sp.add_argument("--segment", type=int, default=None); add_llm_flags(sp)
+    sp.set_defaults(func=cmd_spar_open)
+
     sp = sub.add_parser("spar"); sp.add_argument("session", type=int); sp.add_argument("text")
     sp.add_argument("--deck", default="Korean"); sp.add_argument("--scene", default="")
-    sp.add_argument("--targets", nargs="*", default=None); add_llm_flags(sp); sp.set_defaults(func=cmd_spar)
+    sp.add_argument("--targets", nargs="*", default=None)
+    sp.add_argument("--wind-down", action="store_true", dest="wind_down")
+    add_llm_flags(sp); sp.set_defaults(func=cmd_spar)
 
     sp = sub.add_parser("harvest"); sp.add_argument("session", type=int)
     sp.add_argument("--deck", default="Korean"); sp.add_argument("--accept", action="store_true")
     sp.add_argument("--today", type=int, default=None); add_llm_flags(sp); sp.set_defaults(func=cmd_harvest)
+
+    # --- media / AV cards / anki ---
+    sp = sub.add_parser("media-fetch"); sp.add_argument("id"); sp.add_argument("--url", default=None)
+    sp.add_argument("--section", default=None); sp.set_defaults(func=cmd_media_fetch)
+
+    sp = sub.add_parser("anki-check"); sp.set_defaults(func=cmd_anki_check)
+
+    sp = sub.add_parser("build-av-cards"); sp.add_argument("segment_id", type=int)
+    sp.add_argument("--no-push", action="store_true", dest="no_push")
+    sp.add_argument("--no-media", action="store_true", dest="no_media")
+    sp.add_argument("--replace", action="store_true")
+    sp.add_argument("--url", default=None)
+    sp.add_argument("--section", default=None, help='yt-dlp download window, e.g. "*0:00-30:00"')
+    add_llm_flags(sp); sp.set_defaults(func=cmd_build_av)
+
+    sp = sub.add_parser("primer"); sp.add_argument("segment_id", type=int)
+    sp.set_defaults(func=cmd_primer)
 
     return p
 

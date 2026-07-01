@@ -4,3 +4,6 @@ requests
 sqlmodel
 youtube-transcript-api
 pytest
+yt-dlp
+faster-whisper
+edge-tts

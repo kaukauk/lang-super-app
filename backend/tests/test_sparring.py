@@ -102,3 +102,55 @@ def test_analyze_reply_returns_full_target_surface_not_lemma() -> None:
     used, unexpected = sp.analyze_reply("안녕하세요?", set(targets), targets)
     assert used == ["안녕하세요"]      # the target STRING, not its lemma 안녕
     assert unexpected == []
+
+
+# --- n+1 policy: tolerate exactly one new content word ---
+
+def test_spar_turn_allows_one_new_word() -> None:
+    # reply uses the target (가다) plus exactly ONE unknown content word (수영) ->
+    # n+1 stretch, accepted on the first call (no rewrite).
+    llm = FakeLLM(responses=[spar("수영 가요?", tu=["가다"])])
+    r = sp.spar_turn(user_text="네", provider=llm, targets=["가다"], support=["학교"])
+    assert r.targets_used == ["가다"]
+    assert len(r.unexpected) == 1 and "수영" in r.unexpected
+    assert len(llm.calls) == 1
+    assert any("n+1" in w for w in r.warnings)
+
+
+def test_spar_turn_rewrites_on_two_new_words() -> None:
+    # two unknown content words -> over budget -> rewrite to a clean reply.
+    llm = FakeLLM(responses=[spar("수영복을 입어요?"), spar("학교에 가요?", tu=["가다"])])
+    r = sp.spar_turn(user_text="네", provider=llm, targets=["가다"], support=["학교"])
+    assert r.targets_used == ["가다"] and r.unexpected == []
+    assert len(llm.calls) == 2
+    assert "AT MOST" in llm.calls[1]["user"]
+
+
+# --- opener: Anchor + Prompt state machine ---
+
+def _opening(anchor="안녕하세요. 또 봐요.", role="the customer"):
+    return {"anchor_ko": anchor, "role_en": role,
+            "prompt_en": "You are the customer. What do you say?",
+            "scene_en": "A cafe exchange.", "glosses": {"안녕하세요": "hello"}}
+
+
+def test_spar_open_persists_role_and_records_turn() -> None:
+    sess = sp.start_session(segment_id=None)
+    llm = FakeLLM(responses=[_opening(role="the shopkeeper")])
+    opening = sp.spar_open(sess.id, provider=llm, segment_id=None)
+    assert opening.role_en == "the shopkeeper"
+    assert opening.prompt_en
+    # role persisted on the session
+    assert sp.get_session(sess.id).role_en == "the shopkeeper"
+    # opening recorded as the first assistant turn
+    hist = sp.session_history(sess.id)
+    assert hist and hist[0]["role"] == "assistant"
+    assert hist[0]["text"] == opening.anchor_ko
+
+
+def test_spar_open_falls_back_to_real_lines_when_llm_blank() -> None:
+    sess = sp.start_session(segment_id=None)
+    llm = FakeLLM(responses=[_opening(anchor="")])
+    # no segment -> no closing lines -> anchor stays empty but role still set
+    opening = sp.spar_open(sess.id, provider=llm, segment_id=None)
+    assert opening.role_en == "the customer"

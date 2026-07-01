@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app import config
 from app.services import ingest
 
 SAMPLE = (
@@ -51,13 +52,13 @@ def test_ingest_real_sample() -> None:
     summary = ingest.ingest_from_file(SAMPLE)
     assert summary["youtube_id"] == "AAWYtKPNhcA"
     assert summary["n_cues"] == 1127
-    assert summary["n_study_segments"] == 6
+    assert summary["n_study_segments"] == 12
     assert 3600 < summary["duration_s"] < 3720
 
     segs = ingest.get_segments(summary["video_id"])
     study = [s for s in segs if not s.is_full_review]
     for s in study:
-        assert 540 - 1 <= (s.end_s - s.start_s) <= 660 + 1
+        assert config.SEG_MIN_S - 1 <= (s.end_s - s.start_s) <= config.SEG_MAX_S + 1
     # cues route correctly into segment 1
     cues1 = ingest.get_cues_in_range(summary["video_id"], study[0].start_s, study[0].end_s)
     assert len(cues1) > 50

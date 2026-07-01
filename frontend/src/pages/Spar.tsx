@@ -1,26 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type SparReply } from "../lib/api";
+import { api, type SparOpening, type SparReply } from "../lib/api";
 
 type Msg =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; meta: SparReply };
 
+const BUDGET_S = 15 * 60;   // the ~15-minute roleplay block
+
 export default function Spar() {
   const { sid } = useParams();
   const segmentId = Number(sid);
   const [session, setSession] = useState<number | null>(null);
+  const [opening, setOpening] = useState<SparOpening | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [harvested, setHarvested] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // States 1+2: start the session and run the Anchor + Prompt opener.
   useEffect(() => {
-    api.sparStart(segmentId).then((s) => setSession(s.session_id));
+    let alive = true;
+    api.sparStart(segmentId).then(async (s) => {
+      if (!alive) return;
+      setSession(s.session_id);
+      try {
+        const op = await api.sparOpen(s.session_id, segmentId);
+        if (alive) setOpening(op);
+      } catch { /* opener is best-effort */ }
+    });
+    return () => { alive = false; };
   }, [segmentId]);
 
+  // 15-minute timer (drives the wind-down nudge)
+  useEffect(() => {
+    if (!opening) return;
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(t);
+  }, [opening]);
+
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+
+  const windDown = elapsed >= BUDGET_S;
 
   const send = async () => {
     if (!input.trim() || !session || busy) return;
@@ -29,7 +52,7 @@ export default function Spar() {
     setMsgs((m) => [...m, { role: "user", text }]);
     setBusy(true);
     try {
-      const reply = await api.sparTurn(session, { text });
+      const reply = await api.sparTurn(session, { text, wind_down: windDown });
       setMsgs((m) => [...m, { role: "assistant", text: reply.reply_ko, meta: reply }]);
     } catch (e) {
       setMsgs((m) => [...m, { role: "assistant", text: `(error: ${e})`, meta: {} as SparReply }]);
@@ -49,6 +72,14 @@ export default function Spar() {
       <div className="mb-3 flex items-center gap-3">
         <Link to="/" className="text-sm text-neutral-500 hover:underline">← Library</Link>
         <h1 className="font-semibold">Sparring</h1>
+        {opening?.role_en && (
+          <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+            You play: {opening.role_en}
+          </span>
+        )}
+        <span className={`tabular-nums text-xs ${windDown ? "font-semibold text-amber-600" : "text-neutral-400"}`}>
+          {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")} / 15:00{windDown ? " · wrap up" : ""}
+        </span>
         <button onClick={harvest} className="ml-auto rounded-lg border px-3 py-1.5 text-sm dark:border-neutral-700">
           End &amp; harvest chunks
         </button>
@@ -61,11 +92,22 @@ export default function Spar() {
       )}
 
       <div className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        {msgs.length === 0 && (
-          <p className="text-sm text-neutral-500">
-            Continue the scene in Korean. The partner will steer toward today's target chunks and keep
-            to vocabulary you know. Type a greeting to begin.
-          </p>
+        {/* States 1+2: the scene anchor + your role + the floor */}
+        {opening && (
+          <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/30">
+            {opening.anchor_ko && (
+              <div>
+                <div className="text-xs uppercase tracking-wide text-indigo-500">The scene, picking up…</div>
+                <div className="text-lg">{opening.anchor_ko}</div>
+              </div>
+            )}
+            {opening.prompt_en && (
+              <p className="text-sm text-indigo-800 dark:text-indigo-200">🎭 {opening.prompt_en}</p>
+            )}
+          </div>
+        )}
+        {!opening && msgs.length === 0 && (
+          <p className="text-sm text-neutral-500">Setting the scene…</p>
         )}
         {msgs.map((m, idx) =>
           m.role === "user" ? (

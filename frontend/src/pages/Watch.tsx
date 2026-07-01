@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import LocalPlayer from "../components/LocalPlayer";
 import Player from "../components/Player";
 import { api, type Cue, type SegmentDetail } from "../lib/api";
 
@@ -17,6 +18,8 @@ export default function Watch() {
   }, [id]);
 
   if (!seg) return <p className="text-neutral-500">Loading…</p>;
+  // prefer the locally-cut snippet; fall back to the YouTube embed if not built
+  const hasClip = seg.has_clip ?? false;
 
   const save = async (text: string) => {
     await api.addCard({ ko: text });
@@ -53,15 +56,17 @@ export default function Watch() {
           : "Korean subtitles are synced to the audio. Click a line to save it as a card."}
       </p>
 
-      <Player
-        key={mode}
-        youtubeId={seg.youtube_id}
-        startS={seg.start_s}
-        endS={seg.end_s}
-        mode={mode}
-        cues={cues}
-        onSaveCue={save}
-      />
+      {hasClip ? (
+        <LocalPlayer key={mode} src={api.clipUrl(id)} baseS={seg.start_s} mode={mode} cues={cues} onSaveCue={save} />
+      ) : (
+        <>
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            Showing the YouTube stream. <Link to={`/primer/${id}`} className="font-medium underline">Build this day</Link> to get the
+            exact local clip (frame-accurate) plus the audio/video Anki cards.
+          </div>
+          <Player key={mode} youtubeId={seg.youtube_id} startS={seg.start_s} endS={seg.end_s} mode={mode} cues={cues} onSaveCue={save} />
+        </>
+      )}
 
       {saved > 0 && <p className="text-sm text-emerald-600">Saved {saved} card{saved === 1 ? "" : "s"} to your deck.</p>}
     </div>

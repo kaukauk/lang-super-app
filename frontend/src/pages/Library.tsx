@@ -112,11 +112,14 @@ export default function Library() {
                 <span className="text-sm text-neutral-500">{fmt(s.start_s)}–{fmt(s.end_s)} ({fmt(s.end_s - s.start_s)})</span>
                 <div className="ml-auto flex gap-2">
                   {!s.is_full_review && (
-                    <Link to={`/extract/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">Extract</Link>
+                    <Link to={`/primer/${s.id}`} className="rounded-md border border-indigo-300 px-2.5 py-1 text-sm font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300">1 · Prime</Link>
                   )}
-                  <Link to={`/watch/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">Watch</Link>
+                  <Link to={`/watch/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">2 · Watch</Link>
                   {!s.is_full_review && (
-                    <Link to={`/spar/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">Spar</Link>
+                    <Link to={`/spar/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">3 · Spar</Link>
+                  )}
+                  {!s.is_full_review && (
+                    <Link to={`/extract/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm text-neutral-500 dark:border-neutral-700">Chunks</Link>
                   )}
                 </div>
               </div>

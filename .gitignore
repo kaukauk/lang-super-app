@@ -28,6 +28,9 @@ data/
 *.sqlite
 *.sqlite3
 
+# ── Downloaded videos + cut clips/audio + whisper/tts caches ─────────
+.media_cache/
+
 # ── Generated reports / scratch ─────────────────────────────────────
 backend/sim_week_report.md
 backend/realapi_result.txt

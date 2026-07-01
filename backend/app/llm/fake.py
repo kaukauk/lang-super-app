@@ -49,7 +49,29 @@ class DemoLLM:
         self, *, system: str, user: str, model: str, max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> dict[str, Any]:
+        import re
         self.calls.append({"model": model})
+        if "anchor_ko" in system:
+            # opener (Anchor + Prompt). Echo the provided final lines as the anchor.
+            lines = re.findall(r"^- (.+)$", user, flags=re.MULTILINE)
+            anchor = " ".join(lines) or "안녕하세요. 또 만나요."
+            return {
+                "anchor_ko": anchor,
+                "role_en": "the customer at the shop",
+                "prompt_en": "You are the customer. The shopkeeper is waiting. What do you say?",
+                "scene_en": "A short everyday exchange continues from the scene.",
+                "glosses": {},
+            }
+        if "explanation_en" in system and "targets" in system:
+            # target selection over the numbered Whisper sentence list
+            pairs = re.findall(r"^(\d+):\s*(.+)$", user, flags=re.MULTILINE)
+            n = 5
+            m = re.search(r"Pick exactly (\d+)", user) or re.search(r"your (\d+) best", user)
+            if m:
+                n = int(m.group(1))
+            picks = [{"index": int(i), "ko": t.strip(), "explanation_en": "(demo) in-context hint"}
+                     for i, t in pairs[:n]]
+            return {"targets": picks}
         if "primer_md" in system:
             chunks = (
                 [{"type": "sentence", "ko": k, "en": "(demo)", "gloss": "demo"} for k in self._SENT]

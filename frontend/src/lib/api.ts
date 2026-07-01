@@ -8,6 +8,7 @@ export type Segment = {
 export type SegmentDetail = {
   id: number; video_id: number; youtube_id: string; title: string;
   day_number: number; start_s: number; end_s: number; is_full_review: boolean;
+  has_clip?: boolean;
 };
 export type Cue = { start_s: number; dur_s: number; text: string };
 export type Chunk = { type: string; ko: string; en: string; gloss: string };
@@ -24,6 +25,20 @@ export type SparReply = {
   suggested_user_reply_en: string; targets_used: string[]; unexpected: string[];
   warnings: string[]; glosses: Record<string, string>;
 };
+export type SparOpening = {
+  anchor_ko: string; role_en: string; prompt_en: string; scene_en: string;
+  glosses: Record<string, string>;
+};
+export type AvTarget = {
+  target_idx: number; target_ko: string; context_ko: string; explanation_en: string;
+  start_s: number; end_s: number; context_start_s: number;
+  audio_file: string; clip_file: string; primer_audio: string; anki_note_id: number | null;
+};
+export type AvBuild = {
+  segment_id: number; youtube_id: string; snippet_path: string; pushed: number;
+  warnings: string[]; targets: AvTarget[];
+};
+export type PrimerItem = { target_idx: number; target_ko: string; hint_en: string; audio_path: string };
 
 function qs(params?: Record<string, string | number | undefined>): string {
   if (!params) return "";
@@ -68,8 +83,18 @@ export const api = {
     req<{ created: number; skipped: number }>("/import", post({ content, deck })),
   sparStart: (segment_id?: number) =>
     req<{ session_id: number }>("/spar/start", post({ segment_id })),
-  sparTurn: (sid: number, body: { text: string; scene?: string }) =>
+  sparOpen: (sid: number, segment_id?: number) =>
+    req<SparOpening>(`/spar/${sid}/open`, post({ segment_id })),
+  sparTurn: (sid: number, body: { text: string; scene?: string; wind_down?: boolean }) =>
     req<SparReply>(`/spar/${sid}/turn`, post(body)),
   sparHarvest: (sid: number, accept = true) =>
     req<{ chunks: Chunk[]; accepted_card_ids?: number[] }>(`/spar/${sid}/harvest`, post({ accept })),
+
+  // --- AV pipeline (audio/video cards + in-app primer) ---
+  buildAv: (sid: number, body: { push?: boolean; make_media?: boolean; replace?: boolean; url?: string; section?: string } = {}) =>
+    req<AvBuild>(`/segments/${sid}/build-av-cards`, post(body)),
+  primer: (sid: number) => req<PrimerItem[]>(`/segments/${sid}/primer`),
+  primerAudioUrl: (sid: number, idx: number) => `/api/segments/${sid}/primer-audio/${idx}`,
+  clipUrl: (sid: number) => `/api/segments/${sid}/clip`,
+  ankiCheck: () => req<{ ok: boolean; url: string; version: number; decks: string[] }>("/anki/check"),
 };

@@ -250,6 +250,121 @@ def extract_segment(
     return result
 
 
+# --- AV target selection (over the Whisper sentence list) ----------------
+
+@dataclass
+class TargetPick:
+    index: int           # index into the Whisper sentence list
+    ko: str              # the target sentence (as the LLM echoed it)
+    explanation_en: str  # short, context-oriented English (back-of-card + primer)
+
+
+TARGET_SYSTEM = (
+    "You are a Korean tutor choosing the most useful sentences for a learner to "
+    "drill from a cartoon scene they just watched. You receive the scene's "
+    "sentences, numbered, transcribed from the audio.\n"
+    "Pick {n} TARGET sentences that are COMPLETE, natural sentences useful in daily "
+    "conversation — each must stand on its own (a clear subject/topic AND a verb or "
+    "predicate). Prefer ~4-10 words. STRICTLY AVOID interjections, names, single "
+    "words, or fragments (e.g. reject things like 'hey', 'stop', 'weightlifting', "
+    "'Player Kim'). Avoid sentences whose vocabulary the learner already knows.\n"
+    'Return ONLY JSON: {"targets":[{"index":<int from the list>,"ko":"<the sentence '
+    'exactly as numbered>","explanation_en":"<one short sentence: what is happening '
+    "/ what it means IN CONTEXT — NOT a stiff word-for-word translation>\"}]}. "
+    "Order them best-first. No markdown fences."
+)
+
+
+def build_targets_prompt(sentences: list[str], avoid_forms: list[str], n: int) -> str:
+    avoid = ", ".join(sorted(set(avoid_forms))[:400]) or "(none yet)"
+    numbered = "\n".join(f"{i}: {s}" for i, s in enumerate(sentences))
+    return "\n".join([
+        f"Already-known items to AVOID picking: {{{avoid}}}",
+        f"Return your {n} best COMPLETE-sentence targets, best first.",
+        "",
+        "Scene sentences (index: text):",
+        numbered,
+    ])
+
+
+def is_full_sentence(text: str) -> bool:
+    """Reject fragments/interjections (e.g. '야 역도.', '스톱.'): a real sentence has a
+    predicate (verb/adjective/copula or a sentence-final ending), at least two words,
+    and a few syllables."""
+    t = text.strip().rstrip(".?!… ")
+    morphs = analyzer.analyze(text)
+    has_predicate = any(m.tag.split("-", 1)[0] in ("VV", "VA", "VCP", "VCN") for m in morphs) \
+        or bool(re.search(r"(다|요|까|죠|네|군|구나|세요|거든|잖아|는데|니|어|아)$", t))
+    return has_predicate and len(_HANGUL.findall(text)) >= 5 and len(text.split()) >= 2
+
+
+def _align_index(pick_ko: str, pick_index: int, sentences: list[str]) -> int:
+    """Map an LLM-returned target back to a real sentence index. Trust the given
+    index if it matches; else exact normalized match; else best lemma overlap."""
+    n = len(sentences)
+    pk = _norm(pick_ko)
+    if 0 <= pick_index < n and _norm(sentences[pick_index]) == pk:
+        return pick_index
+    for i, s in enumerate(sentences):
+        if _norm(s) == pk:
+            return i
+    plem = analyzer.lemma_set(pick_ko)
+    if plem:
+        best, best_i = 0.0, -1
+        for i, s in enumerate(sentences):
+            slem = analyzer.lemma_set(s)
+            if not slem:
+                continue
+            score = len(plem & slem) / len(plem | slem)
+            if score > best:
+                best, best_i = score, i
+        if best_i >= 0 and best >= 0.34:
+            return best_i
+    return pick_index if 0 <= pick_index < n else -1
+
+
+def pick_targets(
+    sentences: list[str], provider: LLMProvider, *, known: Optional[set[str]] = None,
+    n: int = config.AV_TARGETS_PER_SEGMENT, model: Optional[str] = None,
+) -> list[TargetPick]:
+    """Choose `n` target sentences from the Whisper sentence list, each aligned back
+    to its index so timing + context come straight from Whisper."""
+    if not sentences:
+        return []
+    known = known or set()
+    model = model or config.EXTRACTION_MODEL
+    n = min(n, len(sentences))
+    # over-request so we can drop fragments and still reach n good full sentences
+    n_request = min(len(sentences), n + 5)
+    data = provider.complete_json(
+        system=TARGET_SYSTEM.replace("{n}", str(n_request)),
+        user=build_targets_prompt(sentences, list(known), n_request),
+        model=model, max_tokens=1600,
+    )
+    raw = data.get("targets") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        raise LLMError("target selection: missing 'targets' array")
+    picks: list[TargetPick] = []
+    seen: set[int] = set()
+    for rt in raw:
+        if not isinstance(rt, dict):
+            continue
+        ko = str(rt.get("ko", "")).strip()
+        if not ko:
+            continue
+        idx = _align_index(ko, int(rt.get("index", -1) or -1), sentences)
+        if idx < 0 or idx in seen:
+            continue
+        if not is_full_sentence(sentences[idx]):       # drop interjections/fragments
+            continue
+        seen.add(idx)
+        picks.append(TargetPick(index=idx, ko=sentences[idx],
+                                explanation_en=str(rt.get("explanation_en", "")).strip()))
+        if len(picks) >= n:
+            break
+    return picks
+
+
 def accept_chunks(
     chunks: list[Chunk], *, segment_id: Optional[int] = None,
     deck_name: str = "Korean", today_ord: Optional[int] = None,

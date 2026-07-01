@@ -11,14 +11,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, db
+from .anki.connect import AnkiConnectClient
 from .llm import OpenAIClient
 from .llm.fake import DemoLLM
-from .services import anki_io, extraction, ingest, sparring, srs
+from .services import (anki_io, avcards, extraction, ingest, sparring, srs,
+                       transcribe, tts)
 
 app = FastAPI(title="Korean Immersion App")
 
@@ -28,8 +30,20 @@ def _startup() -> None:
     db.init_db()
 
 
+def _fake() -> bool:
+    return bool(os.environ.get("LANGAPP_FAKE_LLM"))
+
+
 def provider():
-    return DemoLLM() if os.environ.get("LANGAPP_FAKE_LLM") else OpenAIClient()
+    return DemoLLM() if _fake() else OpenAIClient()
+
+
+def transcriber():
+    return transcribe.FakeTranscriber() if _fake() else transcribe.WhisperTranscriber()
+
+
+def tts_provider():
+    return tts.FakeTTS() if _fake() else tts.EdgeTTS()
 
 
 def _model(override: Optional[str], default: str) -> str:
@@ -73,6 +87,7 @@ class SparTurnBody(BaseModel):
     scene: str = ""
     targets: Optional[list[str]] = None
     model: Optional[str] = None
+    wind_down: bool = False
 
 
 class HarvestBody(BaseModel):
@@ -126,11 +141,13 @@ def segment_detail(segment_id: int) -> dict[str, Any]:
     if seg is None:
         raise HTTPException(404, "segment not found")
     video = ingest.get_video(seg.video_id)
+    from .services import media
+    has_clip = bool(video) and (media.segment_dir(video.youtube_id, segment_id) / "snippet.mp4").exists()
     return {"id": seg.id, "video_id": seg.video_id,
             "youtube_id": video.youtube_id if video else None,
             "title": video.title if video else "",
             "day_number": seg.day_number, "start_s": seg.start_s, "end_s": seg.end_s,
-            "is_full_review": seg.is_full_review}
+            "is_full_review": seg.is_full_review, "has_clip": has_clip}
 
 
 @app.get("/api/segments/{segment_id}/cues")
@@ -140,6 +157,65 @@ def segment_cues(segment_id: int) -> list[dict[str, Any]]:
         raise HTTPException(404, "segment not found")
     cues = ingest.get_cues_in_range(seg.video_id, seg.start_s, seg.end_s)
     return [{"start_s": c.start_s, "dur_s": c.dur_s, "text": c.text} for c in cues]
+
+
+class BuildAvBody(BaseModel):
+    push: bool = True
+    make_media: bool = True
+    replace: bool = False
+    model: Optional[str] = None
+    url: Optional[str] = None
+
+
+@app.post("/api/segments/{segment_id}/build-av-cards")
+def build_av(segment_id: int, body: BuildAvBody) -> dict[str, Any]:
+    try:
+        anki = AnkiConnectClient() if body.push else None
+        res = avcards.build_av_cards(
+            segment_id, llm=provider(), transcriber=transcriber(),
+            tts_provider=tts_provider(), anki=anki,
+            make_media=body.make_media, push=body.push, replace=body.replace,
+            model=body.model, url=body.url)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    return res.as_dict()
+
+
+@app.get("/api/segments/{segment_id}/primer")
+def primer(segment_id: int) -> list[dict[str, Any]]:
+    return avcards.primer_for_segment(segment_id)
+
+
+@app.get("/api/segments/{segment_id}/primer-audio/{idx}")
+def primer_audio(segment_id: int, idx: int):
+    rows = avcards.primer_for_segment(segment_id)
+    match = next((r for r in rows if r["target_idx"] == idx), None)
+    if match is None or not match.get("audio_path") or not Path(match["audio_path"]).exists():
+        raise HTTPException(404, "primer audio not found")
+    return FileResponse(match["audio_path"], media_type="audio/mpeg")
+
+
+@app.get("/api/segments/{segment_id}/clip")
+def segment_clip(segment_id: int):
+    seg = ingest.get_segment(segment_id)
+    if seg is None:
+        raise HTTPException(404, "segment not found")
+    video = ingest.get_video(seg.video_id)
+    from .services import media
+    snippet = media.segment_dir(video.youtube_id, segment_id) / "snippet.mp4" if video else None
+    if snippet is None or not snippet.exists():
+        raise HTTPException(404, "snippet not built yet (run build-av-cards)")
+    return FileResponse(str(snippet), media_type="video/mp4")
+
+
+@app.get("/api/anki/check")
+def anki_check() -> dict[str, Any]:
+    try:
+        client = AnkiConnectClient()
+        return {"ok": True, "url": client.url, "version": client.version(),
+                "decks": client.invoke("deckNames")}
+    except Exception as exc:
+        raise HTTPException(503, str(exc))
 
 
 @app.post("/api/segments/{segment_id}/extract")
@@ -229,6 +305,15 @@ def spar_start(body: SparStartBody) -> dict[str, Any]:
     return {"session_id": sess.id, "segment_id": sess.segment_id}
 
 
+@app.post("/api/spar/{session_id}/open")
+def spar_open(session_id: int, body: SparStartBody) -> dict[str, Any]:
+    opening = sparring.spar_open(session_id, provider=provider(),
+                                 segment_id=body.segment_id)
+    return {"anchor_ko": opening.anchor_ko, "role_en": opening.role_en,
+            "prompt_en": opening.prompt_en, "scene_en": opening.scene_en,
+            "glosses": opening.glosses}
+
+
 @app.post("/api/spar/{session_id}/turn")
 def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
     targets = body.targets
@@ -236,10 +321,14 @@ def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
         targets = [c.front_ko for c in srs.list_cards(deck_name=body.deck)
                    if c.state == "new"][:15]
     support = sorted(srs.known_surface_forms(deck_name=body.deck) - set(targets))
+    sess = sparring.get_session(session_id)
+    role = sess.role_en if sess else ""
+    scene = body.scene or (sess.scene_en if sess else "")
     history = sparring.session_history(session_id)
     sparring.record_turn(session_id, "user", text_ko=body.text)
     resp = sparring.spar_turn(user_text=body.text, provider=provider(), targets=targets,
-                              support=support, scene=body.scene, history=history,
+                              support=support, scene=scene, history=history, role=role,
+                              wind_down=body.wind_down,
                               model=_model(body.model, config.SPARRING_MODEL))
     sparring.record_turn(session_id, "assistant", text_ko=resp.reply_ko,
                          glosses=resp.glosses, targets_used=resp.targets_used)

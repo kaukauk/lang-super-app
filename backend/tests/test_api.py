@@ -31,7 +31,8 @@ def test_full_flow_over_http(client) -> None:
     vid = r.json()["video_id"]
 
     segs = client.get(f"/api/videos/{vid}/segments").json()
-    assert len(segs) == 7 and segs[-1]["is_full_review"] is True
+    # ~61-min sample at ~5-min days -> 12 study days + 1 full-review day.
+    assert len(segs) == 13 and segs[-1]["is_full_review"] is True
     seg1 = segs[0]["id"]
 
     cues = client.get(f"/api/segments/{seg1}/cues").json()

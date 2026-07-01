@@ -78,9 +78,30 @@ class ExtractionRun(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class AvCard(SQLModel, table=True):
+    """An audio/video card built from the video (Whisper-timed) and pushed to Anki.
+    Separate from the text-`Card`/SRS flow — Anki owns the scheduling for these."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    segment_id: int = Field(index=True, foreign_key="segment.id")
+    target_idx: int                 # position among the segment's targets (0-based)
+    target_ko: str                  # the target sentence (front + dedupe key)
+    context_ko: str = ""            # the preceding sentence (back context)
+    explanation_en: str = ""        # brief, context-oriented English (back)
+    start_s: float = 0.0            # target sentence span (front audio)
+    end_s: float = 0.0
+    context_start_s: float = 0.0    # clip span start (= preceding sentence start)
+    audio_file: str = ""            # front original-audio filename (in collection.media)
+    clip_file: str = ""             # back video-clip filename
+    primer_audio_file: str = ""     # in-app primer's clean edge-tts audio (NOT in Anki)
+    anki_note_id: Optional[int] = None
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class SparSession(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     segment_id: Optional[int] = Field(default=None, foreign_key="segment.id")
+    role_en: str = ""               # the character the learner was assigned (State 2)
+    scene_en: str = ""              # short English scene description for continuity
     started_at: datetime = Field(default_factory=_utcnow)
 
 

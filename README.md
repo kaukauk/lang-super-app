@@ -12,14 +12,14 @@ Korean subtitles → deck-constrained AI sparring → harvest tomorrow's chunks.
 
 ## Run (single process)
 ```bash
-./run.sh            # builds the UI if needed, serves http://127.0.0.1:8765
+./run.sh            # builds the UI if needed, serves http://127.0.0.1:8770
 ```
 
 ## Develop (two processes, hot reload)
 ```bash
 # terminal 1 — backend API
-cd backend && .venv/bin/uvicorn app.main:app --reload --port 8765
-# terminal 2 — Vite dev server (proxies /api to :8765)
+cd backend && .venv/bin/uvicorn app.main:app --reload --port 8770
+# terminal 2 — Vite dev server (proxies /api to :8770)
 cd frontend && PATH="$HOME/.local/node/bin:$PATH" npm run dev    # http://localhost:5173
 ```
 

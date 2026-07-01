@@ -15,7 +15,9 @@ from app.services.segmenter import (
     total_duration,
 )
 
-MIN_S, MAX_S = 540, 660
+from app import config
+
+MIN_S, MAX_S = config.SEG_MIN_S, config.SEG_MAX_S  # ~5-min band (285-315)
 
 
 def contiguous_cues(T: float, step: float = 2.0) -> list[Cue]:
@@ -31,7 +33,7 @@ def contiguous_cues(T: float, step: float = 2.0) -> list[Cue]:
 
 @pytest.mark.parametrize(
     "minutes,expected",
-    [(50, 5), (55, 6), (60, 6), (63, 6), (66, 7), (67, 7), (75, 8), (95, 10)],
+    [(5, 1), (10, 2), (15, 3), (20, 4), (25, 5), (30, 6), (50, 10), (61, 12)],
 )
 def test_choose_count(minutes: int, expected: int) -> None:
     assert choose_count(minutes * 60) == expected
@@ -42,7 +44,7 @@ def _feasible(T: float) -> bool:
     return math.ceil(T / MAX_S) <= math.floor(T / MIN_S)
 
 
-@pytest.mark.parametrize("minutes", [9, 10, 11, 20, 50, 61, 63, 75, 88, 95, 120])
+@pytest.mark.parametrize("minutes", [10, 15, 20, 25, 30, 50, 61, 75, 90, 120])
 def test_every_segment_in_band_and_no_tiny_tail(minutes: int) -> None:
     T = minutes * 60.0
     cues = contiguous_cues(T)
@@ -68,7 +70,7 @@ def test_every_segment_in_band_and_no_tiny_tail(minutes: int) -> None:
         assert study[-1].length_s >= MIN_S - 1e-6
 
 
-@pytest.mark.parametrize("minutes", [35, 23])
+@pytest.mark.parametrize("minutes", [9, 22])
 def test_infeasible_duration_is_graceful(minutes: int) -> None:
     """Durations that can't be split into all-[9,11] segments must still produce
     contiguous, covering segments with no tiny tail (close to the band)."""
@@ -86,28 +88,27 @@ def test_infeasible_duration_is_graceful(minutes: int) -> None:
 
 
 def test_day_numbering() -> None:
-    T = 3600.0
+    T = 3600.0  # 60 min at ~5-min days -> 12 study days + 1 full-review day
     plans = plan_segments(T, contiguous_cues(T))
-    assert [p.day_number for p in plans] == [1, 2, 3, 4, 5, 6, 7]
+    assert [p.day_number for p in plans] == list(range(1, 14))
     assert plans[-1].is_full_review is True
-    assert plans[-1].day_number == 7
+    assert plans[-1].day_number == 13
 
 
 def test_snaps_to_real_gap() -> None:
-    # Two ~10-min halves with a big silence gap near the midpoint of a 20-min video.
+    # 20-min video -> 4 five-minute days. A silence gap at 600..610 sits right by
+    # the 2nd boundary (ideal 600) and the cut should snap onto the cue at 610.
     T = 1200.0
     cues: list[Cue] = []
     t = 0.0
-    while t < 595:
+    while t < 600:
         cues.append((t, t + 5)); t += 5
-    # silence from 595..610, then resume
     t = 610.0
     while t < T:
         cues.append((t, min(t + 5, T))); t += 5
     plans = [p for p in plan_segments(T, cues) if not p.is_full_review]
-    # 20 min -> 2 segments; boundary should snap to the cue starting at 610
-    assert len(plans) == 2
-    assert plans[0].end_s == pytest.approx(610.0)
+    assert len(plans) == 4
+    assert plans[1].end_s == pytest.approx(610.0)
 
 
 def test_real_sample_transcript() -> None:
@@ -123,8 +124,8 @@ def test_real_sample_transcript() -> None:
     T = total_duration(cues)
     plans = plan_segments(T, cues)
     study = [p for p in plans if not p.is_full_review]
-    # ~61-64 min video -> 6 study days + 1 full day
-    assert len(study) == 6
+    # ~61 min video -> 12 study days + 1 full day at ~5-min boundaries
+    assert len(study) == 12
     assert sum(1 for p in plans if p.is_full_review) == 1
     for p in study:
         assert MIN_S - 1e-6 <= p.length_s <= MAX_S + 1e-6, p

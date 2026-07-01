@@ -27,6 +27,30 @@ def init_db() -> None:
     from . import models  # noqa: F401  (side-effect: table registration)
 
     SQLModel.metadata.create_all(get_engine())
+    _ensure_columns()
+
+
+# Additive columns introduced after a table first shipped. create_all() never
+# ALTERs an existing table, so we add any missing ones here (SQLite-safe, no-op
+# on a fresh DB). Keep this list tiny — full migrations are out of scope.
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "sparsession": [("role_en", "TEXT DEFAULT ''"), ("scene_en", "TEXT DEFAULT ''")],
+}
+
+
+def _ensure_columns() -> None:
+    from sqlalchemy import text
+
+    with get_engine().begin() as conn:
+        for table, cols in _ADDED_COLUMNS.items():
+            existing = {
+                row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
+            if not existing:
+                continue  # table doesn't exist yet (create_all handles new DBs)
+            for name, decl in cols:
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {decl}"))
 
 
 @contextmanager
