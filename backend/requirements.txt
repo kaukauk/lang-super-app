@@ -7,3 +7,4 @@ pytest
 yt-dlp
 faster-whisper
 edge-tts
+kiwipiepy

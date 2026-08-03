@@ -8,6 +8,7 @@ Everything lives under `config.MEDIA_CACHE_DIR/<youtube_id>/` (git-ignored)."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -48,6 +49,24 @@ def _ytdlp_argv() -> list[str]:
     return [config.YTDLP_BIN]
 
 
+def _js_runtime_args() -> list[str]:
+    """`--js-runtimes NAME:PATH` for the first JS runtime we can find, so yt-dlp can
+    solve YouTube's `n` challenge. "auto" probes deno (yt-dlp's own default) then
+    node; an explicit setting is passed through as-is. Empty list if none found —
+    yt-dlp still runs, just with its deprecation warning."""
+    setting = config.YTDLP_JS_RUNTIME
+    if not setting:
+        return []
+    if setting != "auto":
+        return ["--js-runtimes", setting]
+    for name in ("deno", "node", "bun"):
+        # run.sh puts node in ~/.local/node/bin, which isn't on the subprocess PATH.
+        path = shutil.which(name) or shutil.which(name, path=str(Path.home() / ".local/node/bin"))
+        if path:
+            return ["--js-runtimes", f"{name}:{path}"]
+    return []
+
+
 def build_ytdlp_cmd(
     url_or_id: str, out_template: str, *, section: Optional[str] = None,
 ) -> list[str]:
@@ -62,7 +81,11 @@ def build_ytdlp_cmd(
         "-o", out_template,
         "--no-playlist",
         "--no-progress",
+        *_js_runtime_args(),
     ]
+    if config.YTDLP_REMOTE_COMPONENTS:
+        # Fetches (and caches) the challenge-solver script the runtime executes.
+        cmd += ["--remote-components", config.YTDLP_REMOTE_COMPONENTS]
     if section:
         cmd += ["--download-sections", section, "--force-keyframes-at-cuts"]
     cmd += [url_or_id]

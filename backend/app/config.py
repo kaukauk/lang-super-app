@@ -60,6 +60,14 @@ YTDLP_FORMAT = os.environ.get(
 FFMPEG_BIN = os.environ.get("LANGAPP_FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("LANGAPP_FFPROBE_BIN", "ffprobe")
 
+# YouTube only serves playable formats to clients that can solve its JS "n"
+# challenge; without one you get a bare "This video is not available". Solving it
+# needs a JS runtime plus yt-dlp's EJS solver script. yt-dlp enables only deno by
+# default, so autodetect (deno, then the node run.sh installs) unless overridden.
+# Set either to "" to disable and go back to stock yt-dlp behaviour.
+YTDLP_JS_RUNTIME = os.environ.get("LANGAPP_YTDLP_JS_RUNTIME", "auto")
+YTDLP_REMOTE_COMPONENTS = os.environ.get("LANGAPP_YTDLP_REMOTE_COMPONENTS", "ejs:github")
+
 # --- Whisper (faster-whisper, STT) --------------------------------------
 # large-v3 (not turbo) — turbo trades timestamp accuracy, which matters for cutting
 # clips at exact sentence boundaries on noisy/musical audio.

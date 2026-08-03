@@ -36,9 +36,15 @@ backend/sim_week_report.md
 backend/realapi_result.txt
 
 # ── The Anki fork (reference only; not part of the app, has its own git) ──
-anki/
+# Anchored with a leading slash: a bare `anki/` also matched backend/app/anki/,
+# which silently kept the app's own AnkiConnect package out of every commit.
+/anki/
 
 # ── OS / editor ─────────────────────────────────────────────────────
 .DS_Store
 .idea/
 .vscode/
+
+# verb-anchor clips: keep the script, ignore the media it produces
+verb-clips/*
+!verb-clips/make_clips.sh

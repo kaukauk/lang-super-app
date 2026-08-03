@@ -15,6 +15,16 @@ Korean subtitles → deck-constrained AI sparring → harvest tomorrow's chunks.
 ./run.sh            # builds the UI if needed, serves http://127.0.0.1:8770
 ```
 
+## Run over Tailscale (reachable from your other devices)
+```bash
+./run.sh --tailscale        # also publishes https://<this-machine>.<tailnet>.ts.net:8443
+./run.sh --tailscale-off    # unpublish
+```
+`tailscale serve` proxies from the tailnet to the loopback listener, so the app is
+reachable by devices signed into your tailnet and by nothing else — it is never bound
+to the LAN. HTTPS uses a real Let's Encrypt cert, so no browser warnings.
+Port 8443 is used because :443 on this node is taken; override with `TS_PORT=…`.
+
 ## Develop (two processes, hot reload)
 ```bash
 # terminal 1 — backend API
