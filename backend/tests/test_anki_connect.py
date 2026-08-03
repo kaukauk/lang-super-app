@@ -21,7 +21,7 @@ def test_note_fields_wrap_media_in_sound_tags() -> None:
     f = note.fields()
     assert f["TargetKo"] == "자전거를 타고 싶어요"
     assert f["TargetAudio"] == "[sound:front.mp3]"        # autoplays on front
-    assert f["Clip"] == "clip.mp4"                          # bare name; template embeds <video>
+    assert f["Clip"] == "[sound:clip.mp4]"               # plays via mpv, not the webview
     assert f["ContextKo"] == "오늘 뭐 해요?"
     assert f["Explanation"] == "They want to ride a bike."
 
@@ -34,7 +34,9 @@ def test_model_payload_has_five_fields_and_one_template() -> None:
     back = p["cardTemplates"][0]["Back"]
     assert "{{TargetKo}}" in front and "{{TargetAudio}}" in front
     assert "{{Clip}}" in back and "{{Explanation}}" in back
-    assert "<video" in back and "autoplay" in back          # embeds + autoplays, no play button
+    # An HTML <video> would render a blank player: Anki's Qt WebEngine has no
+    # H.264/AAC decoder. The bare {{Clip}} av-tag hands the clip to mpv instead.
+    assert "<video" not in back
     # back must NOT replay the front audio (would mask the video's own target audio)
     assert "{{FrontSide}}" not in back and "{{TargetAudio}}" not in back
 
@@ -57,7 +59,7 @@ def test_ensure_model_rewrites_a_differently_named_template() -> None:
     upd = next(r for r in ft.requests if r["action"] == "updateModelTemplates")
     templates = upd["params"]["model"]["templates"]
     assert list(templates) == ["Immersion"]
-    assert "<video" in templates["Immersion"]["Back"]
+    assert "{{Explanation}}" in templates["Immersion"]["Back"]
 
 
 def test_ensure_model_refuses_to_guess_among_several_templates() -> None:
