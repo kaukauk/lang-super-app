@@ -183,6 +183,24 @@ class AnkiConnectClient:
         """createDeck is idempotent in AnkiConnect — it returns the existing id."""
         self.invoke("createDeck", deck=deck or config.ANKI_DECK)
 
+    def _existing_template_name(self, model: str) -> str:
+        """The name `updateModelTemplates` has to be keyed by to actually hit this
+        note type's template.
+
+        AnkiConnect matches templates by name and silently ignores names the note
+        type doesn't have — so an update keyed by a name we picked is a no-op on a
+        collection whose template is called something else, and the stale template
+        survives with no error. Anki has no rename-through-the-API, so target
+        whatever is really there instead."""
+        existing = list(self.invoke("modelTemplates", modelName=model) or {})
+        if TEMPLATE_NAME in existing or not existing:
+            return TEMPLATE_NAME
+        if len(existing) == 1:
+            return existing[0]
+        raise AnkiError(
+            f"note type {model!r} has templates {existing}, none named {TEMPLATE_NAME!r} — "
+            "rename one, or point LANGAPP_ANKI_MODEL at a note type this app owns")
+
     def ensure_model(self, model: Optional[str] = None) -> None:
         """Create the note type, or push template/styling edits onto the existing
         one so a template change here reaches decks built by an earlier run."""
@@ -194,7 +212,11 @@ class AnkiConnectClient:
         tmpl = payload["cardTemplates"][0]
         self.invoke("updateModelTemplates", model={
             "name": model,
-            "templates": {tmpl["Name"]: {"Front": tmpl["Front"], "Back": tmpl["Back"]}},
+            "templates": {
+                self._existing_template_name(model): {
+                    "Front": tmpl["Front"], "Back": tmpl["Back"],
+                },
+            },
         })
         self.invoke("updateModelStyling", model={"name": model, "css": payload["css"]})
 

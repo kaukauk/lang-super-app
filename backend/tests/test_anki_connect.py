@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.anki.connect import (
     AnkiConnectClient,
+    AnkiError,
     FakeTransport,
     NoteSpec,
     build_model_payload,
@@ -41,6 +44,29 @@ def test_ensure_model_updates_existing_template() -> None:
     AnkiConnectClient(transport=ft).ensure_model("KoreanImmersion")
     actions = [r["action"] for r in ft.requests]
     assert "updateModelTemplates" in actions and "updateModelStyling" in actions
+
+
+def test_ensure_model_rewrites_a_differently_named_template() -> None:
+    """A collection built by an earlier run carries its own template name; keying
+    the update by ours would silently no-op and leave the stale template."""
+    ft = FakeTransport(results={
+        "modelNames": ["KoreanImmersion"],
+        "modelTemplates": {"Immersion": {"Front": "old", "Back": "{{Clip}}"}},
+    })
+    AnkiConnectClient(transport=ft).ensure_model("KoreanImmersion")
+    upd = next(r for r in ft.requests if r["action"] == "updateModelTemplates")
+    templates = upd["params"]["model"]["templates"]
+    assert list(templates) == ["Immersion"]
+    assert "<video" in templates["Immersion"]["Back"]
+
+
+def test_ensure_model_refuses_to_guess_among_several_templates() -> None:
+    ft = FakeTransport(results={
+        "modelNames": ["KoreanImmersion"],
+        "modelTemplates": {"Card 1": {}, "Card 2": {}},
+    })
+    with pytest.raises(AnkiError):
+        AnkiConnectClient(transport=ft).ensure_model("KoreanImmersion")
 
 
 def test_note_payload_deck_model_and_dedupe() -> None:
