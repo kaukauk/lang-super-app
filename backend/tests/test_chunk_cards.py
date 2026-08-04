@@ -59,6 +59,9 @@ def test_no_english_on_either_side() -> None:
         assert "{{English}}" not in side and "{{Gloss}}" not in side
     assert "{{Prompt}}" in front and "{{Audio}}" not in front   # audio would read the answer
     assert "{{Chunk}}" in back and "{{Audio}}" in back
+    # the chip narrows the front to one correct answer, so it belongs there; on the
+    # back the full chunk already resolves the blank and the chip only restates
+    assert "{{Ending}}" in front and "{{Ending}}" not in back
     assert payload["inOrderFields"] == ["Prompt", "Chunk", "Ending", "Derivation", "Audio"]
 
 

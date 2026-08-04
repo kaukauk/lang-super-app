@@ -188,9 +188,16 @@ _FRONT = """{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
 <div class="prompt">{{Prompt}}</div>
 """
 
+# No {{Ending}} chip here, unlike the KBA Conjugation back this is modelled on.
+# That deck's back is "the question with the answer filled in" (chip + anchor ->
+# target), so repeating the chip completes the prompt. This back resolves the
+# prompt a different way — the full chunk IS the blank filled in — which leaves the
+# chip restating rather than resolving. It stays on the front, where it does real
+# work: it is what narrows "위험한 곳에 ______" to a single correct answer, and it
+# carries the (으) alternation that a single derived form never shows.
+#
 # Audio only on the back — on the front it would read the answer aloud.
-_BACK = """{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
-<div class="chunk">{{Chunk}}</div>
+_BACK = """<div class="chunk">{{Chunk}}</div>
 {{#Derivation}}<div class="derivation">{{Derivation}}</div>{{/Derivation}}
 {{Audio}}
 """
