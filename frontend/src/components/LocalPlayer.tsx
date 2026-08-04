@@ -26,16 +26,22 @@ function groupIntoSentences(cues: Cue[]): Block[] {
 }
 
 type Props = {
-  src: string;          // the local snippet URL
-  baseS: number;        // segment start in full-video time (cues are absolute)
+  src: string;          // the local snippet URL, or a whole joined episode
+  baseS: number;        // what absolute time video-time 0 corresponds to
   mode: "blind" | "study";
   cues?: Cue[];
   onSaveCue?: (text: string) => void;
+  // Whole-episode playback: seek here on load and stop there, instead of cutting
+  // a per-day snippet first. A joined episode is one file on disk, so a day can be
+  // watched the moment it is imported rather than after a build step.
+  seekTo?: number;
+  stopAt?: number;
 };
 
 // Plays the locally-cut ~5-min snippet (frame-accurate, no scrubbing in blind mode)
 // with a Korean-subtitle overlay synced from the segment's cues.
-export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue }: Props) {
+export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
+                                      seekTo, stopAt }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const [time, setTime] = useState(0);       // snippet-relative seconds
   const [dur, setDur] = useState(0);
@@ -63,7 +69,9 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue }: 
     return t < Math.min(nextStart, cur.end_s + 1.0) ? cur : undefined;
   }, [items, t]);
 
-  const progress = dur ? Math.min(100, (time / dur) * 100) : 0;
+  // Progress is through the DAY, not the file: on a whole episode the playhead
+  // starts at the day's offset, so a bar measured from zero would open at 60%.
+  const progress = dur ? Math.min(100, Math.max(0, ((time - (seekTo ?? 0)) / dur) * 100)) : 0;
   const toggle = () => { const v = vidRef.current; if (!v) return; v.paused ? v.play() : v.pause(); };
 
   return (
@@ -75,8 +83,18 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue }: 
           className="h-full w-full"
           controls={mode === "study"}
           controlsList="nodownload noplaybackrate"
-          onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-          onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+          onTimeUpdate={(e) => {
+            const v = e.currentTarget;
+            // Stop at the day's end rather than rolling on into the next day's
+            // material, which would spoil footage the next primer sets up.
+            if (stopAt !== undefined && v.currentTime >= stopAt) v.pause();
+            setTime(v.currentTime);
+          }}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            if (seekTo !== undefined) v.currentTime = seekTo;
+            setDur(stopAt !== undefined ? stopAt - (seekTo ?? 0) : v.duration);
+          }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
         />

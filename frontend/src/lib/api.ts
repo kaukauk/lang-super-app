@@ -5,13 +5,27 @@ export type Video = {
   added_at?: string | null; id: number; youtube_id: string; title: string; duration_s: number };
 export type Segment = {
   id: number; day: number; start_s: number; end_s: number; is_full_review: boolean;
+  done?: boolean;
 };
 export type SegmentDetail = {
   id: number; video_id: number; youtube_id: string; title: string;
   day_number: number; start_s: number; end_s: number; is_full_review: boolean;
-  has_clip?: boolean;
+  has_clip?: boolean; source?: string; part_label?: string | null;
 };
 export type Cue = { start_s: number; dur_s: number; text: string };
+export type LibraryEpisode = {
+  video_id: number; youtube_id: string; title: string; source: string;
+  season: number | null; episode: number | null; part_label: string | null;
+  duration_s: number; n_days: number; n_done: number; complete: boolean;
+  next_segment_id: number | null; next_day: number | null;
+};
+export type LibrarySeries = {
+  title: string;
+  seasons: { season: number; episodes: LibraryEpisode[] }[];
+  n_episodes: number; n_complete: number; days_total: number; days_done: number;
+  continue: LibraryEpisode | null;
+};
+export type LibraryOverview = { series: LibrarySeries[]; videos: LibraryEpisode[] };
 export type Chunk = { type: string; ko: string; en: string; gloss: string };
 export type Extraction = {
   primer_md: string; counts: Record<string, number>; warnings: string[]; chunks: Chunk[];
@@ -117,5 +131,13 @@ export const api = {
     req<{ target_idx: number; seen: boolean | null }>(
       `/segments/${sid}/primer/${idx}/seen`, post({ seen })),
   clipUrl: (sid: number) => `/api/segments/${sid}/clip`,
+  streamUrl: (videoId: number) => `/api/videos/${videoId}/stream`,
+  library: () => req<LibraryOverview>("/library"),
+  ingestSeason: (season: number, replace = false) =>
+    req<{ season: number; added: number; skipped: string[]; failed: string[] }>(
+      "/library/ingest-season", { method: "POST", body: JSON.stringify({ season, replace }) }),
+  markDone: (sid: number, done = true) =>
+    req<{ segment_id: number; done: boolean }>(`/segments/${sid}/done?done=${done}`,
+      { method: "POST" }),
   ankiCheck: () => req<{ ok: boolean; url: string; version: number; decks: string[] }>("/anki/check"),
 };

@@ -18,7 +18,10 @@ export default function Watch() {
   }, [id]);
 
   if (!seg) return <p className="text-neutral-500">Loading…</p>;
-  // prefer the locally-cut snippet; fall back to the YouTube embed if not built
+  // A joined episode is already on disk, so play it directly and seek to the
+  // day's range — nothing to build first. Otherwise prefer a cut snippet, and
+  // fall back to the YouTube embed when neither exists.
+  const isLocal = seg.source === "local";
   const hasClip = seg.has_clip ?? false;
 
   const save = async (text: string) => {
@@ -56,7 +59,10 @@ export default function Watch() {
           : "Korean subtitles are synced to the audio. Click a line to save it as a card."}
       </p>
 
-      {hasClip ? (
+      {isLocal ? (
+        <LocalPlayer key={mode} src={api.streamUrl(seg.video_id)} baseS={0} mode={mode}
+          cues={cues} onSaveCue={save} seekTo={seg.start_s} stopAt={seg.end_s} />
+      ) : hasClip ? (
         <LocalPlayer key={mode} src={api.clipUrl(id)} baseS={seg.start_s} mode={mode} cues={cues} onSaveCue={save} />
       ) : (
         <>

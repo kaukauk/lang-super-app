@@ -178,8 +178,10 @@ def ingest_video(body: IngestBody) -> dict[str, Any]:
 
 @app.get("/api/videos/{video_id}/segments")
 def segments(video_id: int) -> list[dict[str, Any]]:
+    done = library.done_segment_ids()
     return [{"id": s.id, "day": s.day_number, "start_s": s.start_s, "end_s": s.end_s,
-             "is_full_review": s.is_full_review} for s in ingest.get_segments(video_id)]
+             "is_full_review": s.is_full_review, "done": s.id in done}
+            for s in ingest.get_segments(video_id)]
 
 
 @app.get("/api/segments/{segment_id}")
@@ -194,7 +196,11 @@ def segment_detail(segment_id: int) -> dict[str, Any]:
             "youtube_id": video.youtube_id if video else None,
             "title": video.title if video else "",
             "day_number": seg.day_number, "start_s": seg.start_s, "end_s": seg.end_s,
-            "is_full_review": seg.is_full_review, "has_clip": has_clip}
+            "is_full_review": seg.is_full_review, "has_clip": has_clip,
+            # A local episode is one file on disk, so the player can seek to the
+            # day's range directly — no per-day clip build needed before watching.
+            "source": video.source if video else "youtube",
+            "part_label": video.part_label if video else None}
 
 
 @app.get("/api/segments/{segment_id}/cues")
