@@ -89,6 +89,13 @@ WHISPER_LANG = os.environ.get("LANGAPP_WHISPER_LANG", "ko")
 # VAD filtering removes music/silence so word timestamps don't drift on noisy audio
 # (large-v3-turbo mistimes sentences badly without it). Strongly recommended on.
 WHISPER_VAD = os.environ.get("LANGAPP_WHISPER_VAD", "1") not in ("0", "", "false")
+# Sentence grouping. A run normally ends on punctuation or a Korean ender followed
+# by a pause; SENT_SOFT_MAX_S also ends one at the next pause. Neither fires on
+# continuous dialogue with no real silence (cartoons especially), so SENT_HARD_MAX_S
+# is the backstop that forces a split — without it a run grows unbounded and you get
+# a single 50-second "sentence" as a card target and a minute-long clip.
+WHISPER_SENT_SOFT_MAX_S = float(os.environ.get("LANGAPP_WHISPER_SENT_SOFT_MAX_S", "8.0"))
+WHISPER_SENT_HARD_MAX_S = float(os.environ.get("LANGAPP_WHISPER_SENT_HARD_MAX_S", "12.0"))
 
 # --- TTS (edge-tts, Primer audio only) ----------------------------------
 TTS_VOICE = os.environ.get("LANGAPP_TTS_VOICE", "ko-KR-SunHiNeural")

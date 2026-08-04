@@ -64,14 +64,54 @@ def _looks_final(text: str, gap_to_next: float, *, min_gap: float) -> bool:
     return bool(_KO_ENDER.search(stripped)) and gap_to_next >= min_gap
 
 
+def _force_split_at(cur: list[Word], *, min_prefix_s: float) -> int:
+    """Index in `cur` to end a sentence at when the run has outgrown the hard cap.
+
+    Cut at the widest silence, nudged toward a Korean sentence-final ending — the
+    least-bad boundary when the speech itself offers no real one. Candidates must
+    leave at least `min_prefix_s` behind, so a forced cut can't shave off one word
+    and leave the remainder still over the cap.
+
+    With no candidate — a long silence blew past the cap in one step — fall back to
+    cutting just before the word that did it, rather than holding an over-long run
+    together on the strength of a gap that argues the opposite."""
+    best_i, best_score = max(0, len(cur) - 2), -1.0
+    for i in range(len(cur) - 1):
+        if cur[i].end_s - cur[0].start_s < min_prefix_s:
+            continue
+        score = cur[i + 1].start_s - cur[i].end_s
+        if _KO_ENDER.search(re.sub(r'["”\'\)\]]+$', "", cur[i].text.strip())):
+            score += 0.5
+        if score > best_score:
+            best_i, best_score = i, score
+    return best_i
+
+
 def group_sentences(
-    words: list[Word], *, min_gap_s: float = 0.6, max_len_s: float = 12.0,
+    words: list[Word], *, min_gap_s: float = 0.6, max_len_s: Optional[float] = None,
+    hard_max_len_s: Optional[float] = None,
 ) -> list[Sentence]:
     """Fold a flat word stream into sentences. Breaks on terminal punctuation, on a
-    Korean sentence-final ending followed by a >= min_gap_s pause, or when a run
-    grows past max_len_s (so a punctuation-less monologue still splits)."""
+    Korean sentence-final ending followed by a >= min_gap_s pause, or when a run past
+    max_len_s reaches any pause.
+
+    All three of those need a pause, and continuous dialogue may simply never offer
+    one — so `hard_max_len_s` force-splits regardless. Without that backstop a run
+    grows unbounded: real cartoon audio produced a single 52-second, 176-character
+    "sentence", which then became a card target and a minute-long clip."""
+    max_len_s = config.WHISPER_SENT_SOFT_MAX_S if max_len_s is None else max_len_s
+    hard = config.WHISPER_SENT_HARD_MAX_S if hard_max_len_s is None else hard_max_len_s
+    hard = max(hard, max_len_s)
+
     sentences: list[Sentence] = []
     cur: list[Word] = []
+
+    def emit(run: list[Word]) -> None:
+        text = re.sub(r"\s+", " ", "".join(x.text for x in run).strip())
+        if text:
+            sentences.append(Sentence(text=text, start_s=run[0].start_s,
+                                      end_s=run[-1].end_s, words=list(run)))
+
     for i, w in enumerate(words):
         cur.append(w)
         nxt = words[i + 1] if i + 1 < len(words) else None
@@ -83,12 +123,12 @@ def group_sentences(
             or (run_len >= max_len_s and gap >= min_gap_s)
         )
         if end_here:
-            text = "".join(x.text for x in cur).strip()
-            text = re.sub(r"\s+", " ", text)
-            if text:
-                sentences.append(Sentence(text=text, start_s=cur[0].start_s,
-                                          end_s=cur[-1].end_s, words=list(cur)))
+            emit(cur)
             cur = []
+        elif run_len >= hard:
+            k = _force_split_at(cur, min_prefix_s=hard * 0.4)
+            emit(cur[:k + 1])
+            cur = cur[k + 1:]
     return sentences
 
 
@@ -190,10 +230,16 @@ def cache_path(youtube_id: str, segment_id: int) -> Path:
 
 
 def load_cached(youtube_id: str, segment_id: int) -> Optional[list[Sentence]]:
+    """The cache is really Whisper's word stream; grouping is a pure post-process, so
+    re-derive it on load. A fix to `group_sentences` then reaches segments already
+    transcribed instead of needing an expensive re-run to take effect."""
     p = cache_path(youtube_id, segment_id)
-    if p.exists():
-        return [Sentence.from_dict(d) for d in json.loads(p.read_text("utf-8"))]
-    return None
+    if not p.exists():
+        return None
+    sents = [Sentence.from_dict(d) for d in json.loads(p.read_text("utf-8"))]
+    if sents and all(s.words for s in sents):
+        return group_sentences([w for s in sents for w in s.words])
+    return sents
 
 
 def save_cache(youtube_id: str, segment_id: int, sentences: list[Sentence]) -> Path:
