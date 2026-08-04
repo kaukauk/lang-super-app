@@ -19,7 +19,7 @@ from . import config, db
 from .anki.connect import AnkiConnectClient
 from .llm import OpenAIClient
 from .llm.fake import DemoLLM
-from .services import (anki_io, avcards, chunkcards, extraction, ingest,
+from .services import (anki_io, avcards, chunkcards, extraction, ingest, library,
                        sparring, srs, transcribe, tts)
 
 app = FastAPI(title="Korean Immersion App")
@@ -57,6 +57,11 @@ class IngestBody(BaseModel):
     path: Optional[str] = None
     languages: list[str] = ["ko"]
     title: Optional[str] = None
+    replace: bool = False
+
+
+class IngestSeasonBody(BaseModel):
+    season: int
     replace: bool = False
 
 
@@ -114,6 +119,48 @@ def videos() -> list[dict[str, Any]]:
              "duration_s": v.duration_s,
              "added_at": v.created_at.isoformat() if v.created_at else None}
             for v in ingest.list_videos()]
+
+
+@app.get("/api/library")
+def library_overview() -> dict[str, Any]:
+    """Everything the library screen renders, in one request."""
+    return library.overview()
+
+
+@app.post("/api/library/ingest-season")
+def library_ingest_season(body: IngestSeasonBody) -> dict[str, Any]:
+    try:
+        return library.ingest_season(body.season, replace=body.replace)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/segments/{segment_id}/done")
+def segment_done(segment_id: int, done: bool = True) -> dict[str, Any]:
+    try:
+        return (library.mark_segment_done(segment_id) if done
+                else library.unmark_segment(segment_id))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get("/api/videos/{video_id}/stream")
+def video_stream(video_id: int):
+    """Serve a joined episode straight from disk.
+
+    Whole file rather than a per-day clip: the player seeks to the day's range
+    itself, so a day can be watched the moment it is ingested instead of waiting
+    for a build step. FileResponse handles Range requests, which is what makes
+    seeking work at all."""
+    video = ingest.get_video(video_id)
+    if video is None:
+        raise HTTPException(404, "video not found")
+    if video.source != "local" or not video.local_path:
+        raise HTTPException(404, "not a local video")
+    path = Path(video.local_path)
+    if not path.exists():
+        raise HTTPException(404, f"file missing: {path}")
+    return FileResponse(str(path), media_type="video/mp4")
 
 
 @app.post("/api/videos/ingest")

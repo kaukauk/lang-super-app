@@ -36,6 +36,15 @@ def init_db() -> None:
 _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "sparsession": [("role_en", "TEXT DEFAULT ''"), ("scene_en", "TEXT DEFAULT ''")],
     "avcard": [("seen", "INTEGER DEFAULT NULL")],
+    "video": [
+        ("source", "TEXT DEFAULT 'youtube'"),
+        ("local_path", "TEXT DEFAULT NULL"),
+        ("series", "TEXT DEFAULT NULL"),
+        ("season", "INTEGER DEFAULT NULL"),
+        ("episode", "INTEGER DEFAULT NULL"),
+        ("sort_key", "TEXT DEFAULT NULL"),
+        ("part_label", "TEXT DEFAULT NULL"),
+    ],
 }
 
 

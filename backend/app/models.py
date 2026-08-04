@@ -14,11 +14,42 @@ def _utcnow() -> datetime:
 
 
 class Video(SQLModel, table=True):
+    """One studyable video: a YouTube id, or a file joined from downloaded parts.
+
+    `youtube_id` stays the identity column even for local files — everything
+    downstream (media cache paths, clip cutting, AV cards) already resolves by it,
+    so local entries get a synthetic key like `local:atla-s01e03` rather than a
+    nullable second identifier and a branch at every call site.
+
+    Series fields are optional: a one-off video ingested by URL has none, and the
+    library shows it on its own rather than inside a series."""
     id: Optional[int] = Field(default=None, primary_key=True)
     youtube_id: str = Field(index=True, unique=True)
     title: str = ""
     duration_s: float = 0.0
     created_at: datetime = Field(default_factory=_utcnow)
+
+    source: str = "youtube"                       # youtube | local
+    local_path: Optional[str] = None              # absolute path when source=local
+    series: Optional[str] = Field(default=None, index=True)
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    # Sorts episodes within a season, including split ones: 8a before 8b.
+    sort_key: Optional[str] = None
+    # Human label for a partial episode, e.g. "8a (parts 1-3)". None when whole.
+    part_label: Optional[str] = None
+
+
+class SegmentProgress(SQLModel, table=True):
+    """A finished study day.
+
+    A row per completed segment rather than a cursor per series: days can be done
+    out of order, and a cursor would quietly lose that. "Where was I" is then the
+    first segment with no row, which stays correct however the user moves around."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    segment_id: int = Field(index=True, foreign_key="segment.id", unique=True)
+    video_id: int = Field(index=True, foreign_key="video.id")
+    completed_at: datetime = Field(default_factory=_utcnow)
 
 
 class TranscriptCue(SQLModel, table=True):

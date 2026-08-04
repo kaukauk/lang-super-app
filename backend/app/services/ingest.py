@@ -38,8 +38,13 @@ def ingest_cues(
     *,
     title: str | None = None,
     replace: bool = False,
+    meta: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Store a video + its cues + the computed segment plan. Returns a summary."""
+    """Store a video + its cues + the computed segment plan. Returns a summary.
+
+    `meta` carries the library fields (source, local_path, series, season,
+    episode, sort_key, part_label) for videos that came from a file rather than a
+    URL. Kept as one optional dict so the YouTube path is unchanged."""
     if not cues_raw:
         raise ValueError("transcript is empty")
     pairs = _cue_pairs(cues_raw)
@@ -62,6 +67,8 @@ def ingest_cues(
         else:
             video = Video(youtube_id=youtube_id, title=title or youtube_id, duration_s=T)
             s.add(video)
+        for k, v in (meta or {}).items():
+            setattr(video, k, v)
         s.flush()  # assign video.id
 
         for i, c in enumerate(cues_raw):
