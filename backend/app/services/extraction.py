@@ -30,9 +30,15 @@ class Chunk:
     ko: str
     en: str
     gloss: str = ""
+    # Only the sparring harvest fills these, for the Korean-only chunk cards: the
+    # ending's citation notation as a LABEL, and the plain form it attached to, so
+    # the card can show an anchor -> target derivation the way the KBA decks do.
+    ending: str = ""
+    anchor: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        return {"type": self.type, "ko": self.ko, "en": self.en, "gloss": self.gloss}
+        return {"type": self.type, "ko": self.ko, "en": self.en, "gloss": self.gloss,
+                "ending": self.ending, "anchor": self.anchor}
 
 
 @dataclass

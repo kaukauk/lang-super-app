@@ -222,7 +222,7 @@ class AnkiConnectClient:
         """createDeck is idempotent in AnkiConnect — it returns the existing id."""
         self.invoke("createDeck", deck=deck or config.ANKI_DECK)
 
-    def _existing_template_name(self, model: str) -> str:
+    def _existing_template_name(self, model: str, wanted: str = TEMPLATE_NAME) -> str:
         """The name `updateModelTemplates` has to be keyed by to actually hit this
         note type's template.
 
@@ -232,19 +232,23 @@ class AnkiConnectClient:
         survives with no error. Anki has no rename-through-the-API, so target
         whatever is really there instead."""
         existing = list(self.invoke("modelTemplates", modelName=model) or {})
-        if TEMPLATE_NAME in existing or not existing:
-            return TEMPLATE_NAME
+        if wanted in existing or not existing:
+            return wanted
         if len(existing) == 1:
             return existing[0]
         raise AnkiError(
-            f"note type {model!r} has templates {existing}, none named {TEMPLATE_NAME!r} — "
+            f"note type {model!r} has templates {existing}, none named {wanted!r} — "
             "rename one, or point LANGAPP_ANKI_MODEL at a note type this app owns")
 
-    def ensure_model(self, model: Optional[str] = None) -> None:
+    def ensure_model(self, model: Optional[str] = None,
+                     payload: Optional[dict[str, Any]] = None) -> None:
         """Create the note type, or push template/styling edits onto the existing
-        one so a template change here reaches decks built by an earlier run."""
+        one so a template change here reaches decks built by an earlier run.
+
+        `payload` lets a caller supply a different note type (the chunk deck does);
+        it defaults to the AV note type this module describes."""
         model = model or config.ANKI_MODEL
-        payload = build_model_payload(model)
+        payload = payload or build_model_payload(model)
         if model not in (self.invoke("modelNames") or []):
             self.invoke("createModel", **payload)
             return
@@ -252,7 +256,7 @@ class AnkiConnectClient:
         self.invoke("updateModelTemplates", model={
             "name": model,
             "templates": {
-                self._existing_template_name(model): {
+                self._existing_template_name(model, tmpl["Name"]): {
                     "Front": tmpl["Front"], "Back": tmpl["Back"],
                 },
             },
@@ -266,16 +270,22 @@ class AnkiConnectClient:
                            path=str(Path(path).resolve()))
 
     # -- notes --
-    def add_note(self, note: NoteSpec, deck: Optional[str] = None,
-                 model: Optional[str] = None) -> Optional[int]:
-        """Returns the new note id, or None if Anki rejected it as a duplicate —
-        re-running a build should be a no-op, not a crash."""
+    def add_note_payload(self, payload: dict[str, Any]) -> Optional[int]:
+        """Add an already-built note object. Returns the new note id, or None if Anki
+        rejected it as a duplicate — re-running a build should be a no-op, not a
+        crash. Takes the payload rather than a NoteSpec so other note types (the
+        chunk deck) get the same duplicate contract without going through this
+        module's AV-shaped dataclass."""
         try:
-            return self.invoke("addNote", note=build_note_payload(note, deck, model))
+            return self.invoke("addNote", note=payload)
         except AnkiError as exc:
             if "duplicate" in str(exc).lower():
                 return None
             raise
+
+    def add_note(self, note: NoteSpec, deck: Optional[str] = None,
+                 model: Optional[str] = None) -> Optional[int]:
+        return self.add_note_payload(build_note_payload(note, deck, model))
 
     def delete_notes_by_tag(self, tag: str) -> int:
         """Used by --replace to clear a segment's previous cards. Returns the count."""

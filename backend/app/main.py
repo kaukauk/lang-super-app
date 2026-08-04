@@ -19,8 +19,8 @@ from . import config, db
 from .anki.connect import AnkiConnectClient
 from .llm import OpenAIClient
 from .llm.fake import DemoLLM
-from .services import (anki_io, avcards, extraction, ingest, sparring, srs,
-                       transcribe, tts)
+from .services import (anki_io, avcards, chunkcards, extraction, ingest,
+                       sparring, srs, transcribe, tts)
 
 app = FastAPI(title="Korean Immersion App")
 
@@ -95,6 +95,8 @@ class HarvestBody(BaseModel):
     accept: bool = False
     model: Optional[str] = None
     today: Optional[int] = None
+    # push the harvest to its own Anki deck as Korean-only production cards
+    push_anki: bool = False
 
 
 class ImportBody(BaseModel):
@@ -378,6 +380,15 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     if body.accept:
         cards = extraction.accept_chunks(chunks, today_ord=body.today, deck_name=body.deck)
         out["accepted_card_ids"] = [c.id for c in cards]
+    if body.push_anki:
+        # Anki is optional and often simply not running; a failed push must not
+        # discard a harvest the learner just earned.
+        try:
+            out["anki"] = chunkcards.push_chunks(
+                chunks, corrections=corrections, session_id=session_id,
+                tts_provider=tts_provider())
+        except Exception as exc:
+            out["anki"] = {"error": str(exc), "pushed": 0}
     return out
 
 

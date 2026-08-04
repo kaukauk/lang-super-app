@@ -110,3 +110,8 @@ ANKICONNECT_URL = os.environ.get("LANGAPP_ANKICONNECT_URL", "http://127.0.0.1:87
 # and can be tuned/suspended on their own. Override with LANGAPP_ANKI_DECK.
 ANKI_DECK = os.environ.get("LANGAPP_ANKI_DECK", "Korean::Immersion")
 ANKI_MODEL = os.environ.get("LANGAPP_ANKI_MODEL", "KoreanImmersion")
+# Harvested sparring chunks. A sibling of the KBA Nouns/Verbs decks rather than a
+# child of the immersion deck: those cover vocab and conjugation form, this is the
+# assembly layer none of them has. Korean-only production cards (anki/chunks.py).
+ANKI_CHUNK_DECK = os.environ.get("LANGAPP_ANKI_CHUNK_DECK", "Korean::Chunks")
+ANKI_CHUNK_MODEL = os.environ.get("LANGAPP_ANKI_CHUNK_MODEL", "KoreanChunk")

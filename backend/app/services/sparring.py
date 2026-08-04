@@ -254,6 +254,11 @@ HARVEST_SYSTEM = (
     'object {"chunks":[{"type","ko","en","gloss"}]} with type in '
     "sentence|noun_verb|grammar. A grammar chunk must be a real phrase with the "
     "ending on an actual verb (\"가려면\"), never a bare ending (\"-려면\"). "
+    "Each chunk may also carry \"ending\" and \"anchor\": when the chunk contains a "
+    "notable ending or particle, give its citation notation in \"ending\" (e.g. "
+    "\"-(으)면 안 돼요\", \"을/를\") and the plain 해요-form the ending attached to in "
+    "\"anchor\" (e.g. \"들어가요\"). Leave both empty when the chunk is a plain "
+    "collocation with nothing to explain. Never invent an anchor you are unsure of. "
     "Avoid items in the KNOWN list. No markdown fences."
 )
 
@@ -287,7 +292,9 @@ def harvest_chunks(
             if t in config.CHUNK_TYPES and isinstance(ko, str) and ko.strip():
                 out.append(Chunk(type=t, ko=ko.strip(),
                                  en=str(rc.get("en", "")).strip(),
-                                 gloss=str(rc.get("gloss", "")).strip()))
+                                 gloss=str(rc.get("gloss", "")).strip(),
+                                 ending=str(rc.get("ending", "")).strip(),
+                                 anchor=str(rc.get("anchor", "")).strip()))
     return dedupe_chunks(drop_citation_grammar(out), known)[:max_n]
 
 
