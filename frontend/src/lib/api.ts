@@ -1,7 +1,8 @@
 // Typed client for the FastAPI backend. All calls go through /api (proxied in
 // dev by Vite, same-origin in production where FastAPI serves the built app).
 
-export type Video = { id: number; youtube_id: string; title: string; duration_s: number };
+export type Video = {
+  added_at?: string | null; id: number; youtube_id: string; title: string; duration_s: number };
 export type Segment = {
   id: number; day: number; start_s: number; end_s: number; is_full_review: boolean;
 };
@@ -19,7 +20,7 @@ export type Extraction = {
 export type Card = {
   id: number; kind: string; front_ko: string; back_en: string; gloss: string; state: string;
 };
-export type Stats = { total: number; new: number; due: number };
+export type Stats = { total: number | null; chunks: number | null; source: string };
 export type Correction = {
   original: string; corrected: string; note_en: string;
   kind: "spelling" | "grammar" | "naturalness";
@@ -31,7 +32,7 @@ export type SparReply = {
   warnings: string[]; glosses: Record<string, string>;
 };
 export type ChunkCard = {
-  note_id: number; prompt: string; chunk: string; context: string; ending: string;
+  note_id: number; added_at: string | null; prompt: string; chunk: string; context: string; ending: string;
   anchor: string; target: string; gloss: string; audio: string; tags: string[];
 };
 export type Lookup = { word: string; gloss_en: string; ending: string; lemma: string };

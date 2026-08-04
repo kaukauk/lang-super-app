@@ -133,22 +133,15 @@ def due_cards(
 
 
 def stats(*, deck_name: str = "Korean", today_ord: Optional[int] = None) -> dict[str, int]:
-    today = today_ord if today_ord is not None else today_ordinal()
+    """How many cards the deck holds. Nothing else: Anki owns scheduling, so every
+    row here is unscheduled and a "due"/"new" split would read as information while
+    being a constant. `today_ord` is accepted and ignored for callers' sake."""
     deck = ensure_deck(deck_name)
     with db.session_scope() as s:
         total = s.exec(
             select(func.count()).select_from(Card).where(Card.deck_id == deck.id)
         ).one()
-        new = s.exec(
-            select(func.count()).select_from(Card)
-            .where(Card.deck_id == deck.id).where(Card.state == "new")
-        ).one()
-        due = s.exec(
-            select(func.count()).select_from(Card)
-            .where(Card.deck_id == deck.id)
-            .where(Card.due_ord != None).where(Card.due_ord <= today)  # noqa: E711
-        ).one()
-    return {"total": int(total), "new": int(new), "due": int(due)}
+    return {"total": int(total)}
 
 
 def list_cards(*, deck_name: str = "Korean") -> list[Card]:
@@ -160,13 +153,11 @@ def list_cards(*, deck_name: str = "Korean") -> list[Card]:
 
 
 def known_surface_forms(*, deck_name: str = "Korean") -> set[str]:
-    """All surface forms across the deck (for extraction dedupe + sparring vocab)."""
-    forms: set[str] = set()
-    for c in list_cards(deck_name=deck_name):
-        try:
-            forms.update(json.loads(c.surface_forms))
-        except (json.JSONDecodeError, TypeError):
-            pass
-        if c.front_ko:
-            forms.add(c.front_ko.strip())
-    return {f for f in forms if f}
+    """Delegates to Anki — see services/known.py.
+
+    Kept at this name so the many callers keep one import, but the app's own Card
+    table is no longer consulted: two stores of the same thing drift apart, and Anki
+    is the master. It is also where the real vocabulary is — thousands of notes,
+    against the handful this table ever held."""
+    from . import known
+    return known.known_surface_forms(deck_name)

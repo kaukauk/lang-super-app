@@ -10,6 +10,7 @@ segment. A harvest is a handful of chunks from a conversation that just happened
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -108,8 +109,13 @@ def browse(deck: Optional[str] = None, *, anki: Optional[AnkiConnectClient] = No
     cards = []
     for info in anki.invoke("notesInfo", notes=note_ids) or []:
         f = {k: v.get("value", "") for k, v in (info.get("fields") or {}).items()}
+        note_id = info.get("noteId")
         cards.append({
-            "note_id": info.get("noteId"),
+            "note_id": note_id,
+            # An Anki note id IS its creation time in epoch milliseconds, so the
+            # added date comes free — no extra field to store or keep in step.
+            "added_at": (datetime.fromtimestamp(note_id / 1000, tz=timezone.utc)
+                         .isoformat() if note_id else None),
             "prompt": f.get("Prompt", ""),
             "chunk": f.get("Chunk", ""),
             "context": f.get("Context", ""),

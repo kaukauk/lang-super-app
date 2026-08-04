@@ -11,12 +11,19 @@ export default function Library() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [sort, setSort] = useState<"added" | "title">("added");
 
   const reload = () => {
     api.videos().then(setVideos).catch((e) => setErr(String(e)));
     api.stats().then(setStats).catch(() => {});
   };
   useEffect(reload, []);
+
+  // newest first: the day you added a video is how you look for it
+  const shown = [...videos].sort((a, b) =>
+    sort === "title"
+      ? a.title.localeCompare(b.title)
+      : (b.added_at ?? "").localeCompare(a.added_at ?? ""));
 
   const open = async (v: Video) => {
     setSel(v);
@@ -54,9 +61,10 @@ export default function Library() {
       {/* deck stats + Anki interop */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
         <div className="flex gap-4 text-sm">
-          <Stat label="Due today" value={stats?.due} accent />
-          <Stat label="New" value={stats?.new} />
-          <Stat label="Total cards" value={stats?.total} />
+          {/* count only, and read from Anki — a "due"/"new" split here would be
+              the app inventing numbers Anki is the authority on */}
+          <Stat label="Cards in Anki" value={stats?.total ?? undefined} accent />
+          <Stat label="Harvested chunks" value={stats?.chunks ?? undefined} />
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Link to="/chunks" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">
@@ -88,12 +96,24 @@ export default function Library() {
       </div>
 
       {/* video list */}
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-neutral-500">Sort</span>
+        <div className="inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
+          {([["added", "Date added"], ["title", "Title"]] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setSort(k)}
+              className={`rounded-md px-2.5 py-1 ${sort === k ? "bg-indigo-600 text-white" : ""}`}>{label}</button>
+          ))}
+        </div>
+      </div>
       <div className="grid gap-2">
-        {videos.map((v) => (
+        {shown.map((v) => (
           <button key={v.id} onClick={() => open(v)}
             className={`rounded-lg border p-3 text-left transition hover:border-indigo-400 dark:border-neutral-800 ${sel?.id === v.id ? "border-indigo-500" : "border-neutral-200"}`}>
             <div className="font-medium">{v.title || v.youtube_id}</div>
-            <div className="text-sm text-neutral-500">{v.youtube_id} · {fmt(v.duration_s)}</div>
+            <div className="text-sm text-neutral-500">
+              {v.youtube_id} · {fmt(v.duration_s)}
+              {v.added_at && ` · added ${new Date(v.added_at).toLocaleDateString()}`}
+            </div>
           </button>
         ))}
         {videos.length === 0 && <p className="text-sm text-neutral-500">No videos yet — add one above.</p>}

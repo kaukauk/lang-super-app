@@ -111,7 +111,9 @@ def health() -> dict[str, Any]:
 @app.get("/api/videos")
 def videos() -> list[dict[str, Any]]:
     return [{"id": v.id, "youtube_id": v.youtube_id, "title": v.title,
-             "duration_s": v.duration_s} for v in ingest.list_videos()]
+             "duration_s": v.duration_s,
+             "added_at": v.created_at.isoformat() if v.created_at else None}
+            for v in ingest.list_videos()]
 
 
 @app.post("/api/videos/ingest")
@@ -251,8 +253,7 @@ def extract(segment_id: int, body: ExtractBody) -> dict[str, Any]:
                            "warnings": result.warnings,
                            "chunks": [c.as_dict() for c in result.chunks]}
     if body.accept:
-        cards = extraction.accept_chunks(result.chunks, segment_id=segment_id, today_ord=body.today)
-        out["accepted_card_ids"] = [c.id for c in cards]
+        out["accepted"] = len(extraction.accept_chunks(result.chunks, segment_id=segment_id))
     return out
 
 
@@ -271,8 +272,7 @@ def accept_chunks_ep(body: AcceptBody) -> dict[str, Any]:
               en=c.get("en", ""), gloss=c.get("gloss", ""))
         for c in body.chunks if c.get("ko")
     ]
-    cards = extraction.accept_chunks(chunks, segment_id=body.segment_id, today_ord=body.today)
-    return {"accepted": len(cards)}
+    return {"accepted": len(extraction.accept_chunks(chunks, segment_id=body.segment_id))}
 
 
 @app.get("/api/chunks/browse")
@@ -297,8 +297,16 @@ def chunk_audio(filename: str):
 
 
 @app.get("/api/stats")
-def stats(deck: str = "Korean", today: Optional[int] = None) -> dict[str, int]:
-    return srs.stats(deck_name=deck, today_ord=today)
+def stats(deck: str = "Korean", today: Optional[int] = None) -> dict[str, Any]:
+    """Card count, read from Anki so the site can never disagree with it."""
+    try:
+        client = AnkiConnectClient()
+        return {"total": len(client.invoke("findNotes", query=f'deck:"{deck}"') or []),
+                "chunks": len(client.invoke(
+                    "findNotes", query=f'deck:"{config.ANKI_CHUNK_DECK}"') or []),
+                "source": "anki"}
+    except Exception as exc:
+        return {"total": None, "chunks": None, "source": "unavailable", "error": str(exc)}
 
 
 @app.get("/api/cards")
@@ -399,8 +407,7 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     out: dict[str, Any] = {"chunks": [c.as_dict() for c in chunks],
                            "corrections": corrections, "lookups": lookups}
     if body.accept:
-        cards = extraction.accept_chunks(chunks, today_ord=body.today, deck_name=body.deck)
-        out["accepted_card_ids"] = [c.id for c in cards]
+        out["accepted"] = len(extraction.accept_chunks(chunks, deck_name=body.deck))
     if body.push_anki:
         # Anki is optional and often simply not running; a failed push must not
         # discard a harvest the learner just earned.

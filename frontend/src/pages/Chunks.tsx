@@ -9,6 +9,7 @@ import { api, type ChunkCard } from "../lib/api";
 type Mode = "list" | "cards";
 type Side = "both" | "front" | "back";
 type First = "korean" | "english";
+type Sort = "added" | "added-asc" | "alpha";
 
 const SIDES: { key: Side; label: string }[] = [
   { key: "both", label: "Both sides" },
@@ -24,6 +25,7 @@ export default function Chunks() {
   const [first, setFirst] = useState<First>("korean");
   const [i, setI] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [sort, setSort] = useState<Sort>("added");
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const load = useCallback(() => {
@@ -34,8 +36,16 @@ export default function Chunks() {
   }, []);
   useEffect(load, [load]);
 
-  const n = cards?.length ?? 0;
-  const card = cards?.[i];
+  // Anki note ids are creation timestamps, so "date added" needs no stored field.
+  const shown = useMemo(() => {
+    const list = [...(cards ?? [])];
+    if (sort === "alpha") return list.sort((a, b) => a.chunk.localeCompare(b.chunk));
+    list.sort((a, b) => (a.added_at ?? "").localeCompare(b.added_at ?? ""));
+    return sort === "added" ? list.reverse() : list;
+  }, [cards, sort]);
+
+  const n = shown.length;
+  const card = shown[i];
 
   const go = useCallback((delta: number) => {
     setI((prev) => Math.min(Math.max(prev + delta, 0), Math.max(n - 1, 0)));
@@ -60,7 +70,7 @@ export default function Chunks() {
   // In flashcard mode "first" chooses which side leads. Korean-first is the
   // production direction; English-first only has anything to show on cards that
   // carry a gloss, which is the ones born from a word you looked up.
-  const withGloss = useMemo(() => (cards ?? []).filter((c) => c.gloss), [cards]);
+  const withGloss = useMemo(() => shown.filter((c) => c.gloss), [shown]);
 
   if (err) {
     return (
@@ -91,6 +101,9 @@ export default function Chunks() {
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <Toggle value={mode} onChange={(m) => { setMode(m); setFlipped(false); }}
           options={[{ key: "list" as Mode, label: "List" }, { key: "cards" as Mode, label: "Flashcards" }]} />
+        <Toggle<Sort> value={sort} onChange={(s) => { setSort(s); setI(0); setFlipped(false); }}
+          options={[{ key: "added", label: "Newest" }, { key: "added-asc", label: "Oldest" },
+                    { key: "alpha", label: "A–Z" }]} />
         {mode === "list" ? (
           <Toggle<Side> value={side} onChange={setSide} options={SIDES} />
         ) : (
@@ -112,7 +125,7 @@ export default function Chunks() {
 
       {mode === "list" ? (
         <div className="divide-y divide-neutral-200 overflow-hidden rounded-xl border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          {cards.map((c) => (
+          {shown.map((c) => (
             <div key={c.note_id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 bg-white px-4 py-3 dark:bg-neutral-900">
               {side !== "back" && (
                 <div className="min-w-[14rem] flex-1">

@@ -85,7 +85,18 @@ def test_stats_and_known_forms() -> None:
     c = srs.add_card(front_ko="불", surface_forms=["불"], due_ord=1000, state="new")
     srs.review_card(c.id, "good", today_ord=1000)
     st = srs.stats(today_ord=1000)
-    assert st["total"] == 2
-    assert st["new"] == 1            # one promoted to review
-    forms = srs.known_surface_forms()
+    # count only: Anki owns scheduling, so a new/due split here would be the app
+    # inventing numbers the collection is the authority on
+    assert st == {"total": 2}
+    # known vocabulary comes from Anki now, not this table — proved with a fake
+    # transport rather than whatever collection happens to be open
+    from app.anki.connect import AnkiConnectClient, FakeTransport
+    from app.services import known
+    ft = FakeTransport(results={
+        "findNotes": [1, 2],
+        "notesInfo": [{"fields": {"Front": {"value": "물"}, "Back": {"value": "water"}}},
+                      {"fields": {"Front": {"value": "불"}, "Back": {"value": "fire"}}}],
+    })
+    forms = known.known_surface_forms("Korean", anki=AnkiConnectClient(transport=ft))
     assert {"물", "불"} <= forms
+    assert "water" not in forms          # English fields are not surface forms

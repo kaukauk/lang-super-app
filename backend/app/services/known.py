@@ -1,0 +1,116 @@
+"""What the learner already knows — read from Anki, which is the master database.
+
+Previously this came from the app's own Card table, which meant two stores of the
+same thing that drifted the moment either side was edited. Anki is where the cards
+actually live and get reviewed, so it is the only place asked.
+
+It is also far more accurate: the app's table held a handful of rows while the
+collection holds thousands, so "avoid re-teaching what they know" was working off
+a tiny sample and re-teaching constantly.
+
+The on-disk file here is a CACHE, not a second source of truth: it is only read
+when Anki cannot be reached, and it exists so closing Anki degrades extraction
+rather than breaking it. It is never written to by anything but a successful read
+from Anki.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+from .. import config
+from ..anki.connect import AnkiConnectClient
+
+_HANGUL = re.compile(r"[가-힣]")
+# notesInfo on a few thousand notes is a large payload; ask in slices.
+_BATCH = 500
+
+
+def cache_path() -> Path:
+    return Path(config.MEDIA_CACHE_DIR) / "known_forms.json"
+
+
+def _forms_from_note(info: dict[str, Any]) -> set[str]:
+    """Every Korean-bearing field value on a note.
+
+    Field names differ per note type — Basic uses Front, KBA Conjugation uses
+    Anchor/Target, ours uses Chunk — so select on content rather than maintaining a
+    per-model map that silently misses any note type added later."""
+    out: set[str] = set()
+    for value in (info.get("fields") or {}).values():
+        text = (value or {}).get("value", "")
+        # strip media tags and any HTML the note carries
+        text = re.sub(r"\[sound:[^\]]*\]", " ", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"&nbsp;?", " ", text).strip()
+        if _is_korean_form(text):
+            out.add(text)
+    return out
+
+
+def _is_korean_form(text: str) -> bool:
+    """Reject fields that merely CONTAIN Korean.
+
+    Definition fields routinely read "(1) it is possible that 아마도 2) how on earth"
+    — mostly English with a Korean word embedded. Taking those whole would feed the
+    LLM's avoid-list and the morphological analyzer sentences of English, so require
+    the value to be predominantly Hangul and short enough to be a real surface form
+    rather than a gloss."""
+    text = text.strip()
+    if not text or len(text) > 80:
+        return False
+    dense = re.sub(r"\s", "", text)
+    if not dense:
+        return False
+    return len(_HANGUL.findall(dense)) / len(dense) >= 0.5
+
+
+def fetch_from_anki(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] = None,
+                    ) -> set[str]:
+    """Every Korean surface form in `deck` and its subdecks."""
+    anki = anki or AnkiConnectClient()
+    note_ids = anki.invoke("findNotes", query=f'deck:"{deck}"') or []
+    forms: set[str] = set()
+    for i in range(0, len(note_ids), _BATCH):
+        for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
+            forms |= _forms_from_note(info)
+    return {f for f in forms if f}
+
+
+def save_cache(forms: set[str], deck: str) -> None:
+    p = cache_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"deck": deck, "fetched_at": time.time(),
+                             "forms": sorted(forms)}, ensure_ascii=False),
+                 encoding="utf-8")
+
+
+def load_cache(deck: str) -> Optional[set[str]]:
+    p = cache_path()
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text("utf-8"))
+    except ValueError:
+        return None
+    if data.get("deck") != deck:
+        return None
+    return set(data.get("forms") or [])
+
+
+def known_surface_forms(deck: str = "Korean", *,
+                        anki: Optional[AnkiConnectClient] = None) -> set[str]:
+    """Known vocabulary from Anki, falling back to the last successful read.
+
+    A failure here must not stop a build: returning an empty set would silently
+    re-teach everything, so a stale cache is strictly better than none."""
+    try:
+        forms = fetch_from_anki(deck, anki=anki)
+        save_cache(forms, deck)
+        return forms
+    except Exception:
+        return load_cache(deck) or set()

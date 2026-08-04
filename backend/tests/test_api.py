@@ -40,18 +40,24 @@ def test_full_flow_over_http(client) -> None:
 
     ex = client.post(f"/api/segments/{seg1}/extract", json={"accept": True, "today": 1000}).json()
     assert ex["counts"] == {"sentence": 5, "noun_verb": 5, "grammar": 5}
-    assert len(ex["accepted_card_ids"]) == 15
+    assert ex["accepted"] == 15
 
     # Anki owns reviewing: accepted chunks are recorded as known vocab, never
     # scheduled, and the in-app review endpoints are gone with the warm-up page
     assert client.get("/api/reviews/due").status_code == 404
+    # stats read Anki; with no collection reachable in tests it says so rather than
+    # quietly reporting a number from a store that is no longer the master
     stats = client.get("/api/stats", params={"today": 1001}).json()
-    assert stats["total"] == 15 and stats["due"] == 0
+    assert stats["source"] == "unavailable" and stats["total"] is None
 
+    # The TXT round-trip covers cards held in the app before they reach Anki, so it
+    # needs its own rows now that accepting pushes straight to the collection.
+    for ko, en in (("물", "water"), ("불", "fire")):
+        client.post("/api/cards", json={"ko": ko, "en": en})
     txt = client.get("/api/export.txt").text
     assert txt.startswith("#separator:;")
     imp = client.post("/api/import", json={"content": txt, "deck": "Imported"}).json()
-    assert imp["created"] == 15
+    assert imp["created"] == 2
 
     sess = client.post("/api/spar/start", json={"segment_id": seg1}).json()["session_id"]
     turn = client.post(f"/api/spar/{sess}/turn", json={"text": "안녕하세요"}).json()

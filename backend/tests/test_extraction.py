@@ -83,7 +83,7 @@ def test_primer_hangul_warning() -> None:
     assert any("Korean" in w for w in r.warnings)
 
 
-def test_extract_segment_and_accept_records_known_vocab() -> None:
+def test_extract_segment_and_accept_passes_chunks_through() -> None:
     cues = [{"text": f"{i}번 줄이에요", "start": i * 2.0, "duration": 2.0} for i in range(400)]
     summary = ingest.ingest_cues("vidEXTRACT1", cues, title="t")
     seg = [s for s in ingest.get_segments(summary["video_id"]) if not s.is_full_review][0]
@@ -92,14 +92,11 @@ def test_extract_segment_and_accept_records_known_vocab() -> None:
     result = ex.extract_segment(seg.id, llm)
     assert len(result.chunks) == 15
 
-    cards = ex.accept_chunks(result.chunks, segment_id=seg.id, today_ord=5000)
-    assert len(cards) == 15
-    # Anki owns reviewing now, so nothing here is scheduled. These rows still matter:
-    # known_surface_forms reads them, and that is what stops extraction and sparring
-    # re-teaching a chunk the learner has already been given.
-    assert all(c.due_ord is None for c in cards)
-    assert len(srs.due_cards(today_ord=5001)) == 0
-    assert srs.known_surface_forms(deck_name="Korean") >= {c.ko for c in result.chunks}
+    # Anki is the master store: accepting no longer writes a parallel card table,
+    # so the site can't show a set of cards that disagrees with the collection.
+    accepted = ex.accept_chunks(result.chunks, segment_id=seg.id)
+    assert [c.ko for c in accepted] == [c.ko for c in result.chunks]
+    assert srs.list_cards(deck_name="Korean") == []
 
 
 def test_bare_ending_grammar_chunks_are_rejected() -> None:

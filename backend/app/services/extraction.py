@@ -421,21 +421,15 @@ def pick_targets(
 def accept_chunks(
     chunks: list[Chunk], *, segment_id: Optional[int] = None,
     deck_name: str = "Korean", today_ord: Optional[int] = None,
-) -> list[Card]:
-    """Record accepted chunks as KNOWN vocabulary — never scheduled.
+) -> list[Chunk]:
+    """Accepted chunks go to Anki and nowhere else.
 
-    Anki owns reviewing now, so nothing here is given a due date. The rows still
-    matter: `srs.known_surface_forms` reads them, and that is what stops extraction
-    and sparring from re-teaching something the learner has already been given. Drop
-    the row and every future session happily suggests the same chunk again.
+    This used to also write rows into the app's own Card table, so the same chunk
+    lived in two stores with nothing keeping them in step — exactly the mismatch
+    between the site and Anki being removed here. Known-vocabulary lookups now read
+    Anki directly (services/known.py), so that table has no reader left.
 
-    `today_ord` is accepted and ignored, so existing callers and the CLI keep
-    working; there is no schedule left for it to move."""
-    cards: list[Card] = []
-    for c in chunks:
-        cards.append(srs.add_card(
-            front_ko=c.ko, back_en=c.en, gloss=c.gloss, kind=c.type,
-            surface_forms=[c.ko], source_segment_id=segment_id,
-            deck_name=deck_name, state="new", due_ord=None,
-        ))
-    return cards
+    Returns the chunks unchanged. `segment_id` and `today_ord` are accepted and
+    ignored so existing callers and the CLI keep working; there is no in-app store
+    to attribute them to and no schedule left to move."""
+    return list(chunks)
