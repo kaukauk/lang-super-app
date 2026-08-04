@@ -109,6 +109,22 @@ class SparSession(SQLModel, table=True):
     started_at: datetime = Field(default_factory=_utcnow)
 
 
+class SparLookup(SQLModel, table=True):
+    """A word or ending the learner clicked mid-sparring to see its meaning.
+
+    Kept because a lookup is the cleanest evidence of a comprehension gap there is:
+    unprompted, in context, at the moment it bit. Feeds the harvest as a candidate
+    rather than becoming a card directly — clicking is cheap and lossy, and the
+    harvest already has a review step."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(index=True, foreign_key="sparsession.id")
+    word: str                       # the surface form clicked
+    context_ko: str = ""            # the assistant line it appeared in
+    gloss_en: str = ""              # what we showed the learner
+    ending: str = ""                # citation notation, when the click was grammar
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class SparTurn(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     session_id: int = Field(index=True, foreign_key="sparsession.id")

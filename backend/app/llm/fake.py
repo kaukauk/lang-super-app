@@ -7,6 +7,7 @@ tests can assert on the prompts that were built.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 
@@ -79,13 +80,17 @@ class DemoLLM:
                 + [{"type": "grammar", "ko": k, "en": "(demo)", "gloss": "demo"} for k in self._GRAM]
             )
             return {"primer_md": "Scene 1. A demo English-only primer.", "chunks": chunks}
+        if "clicked a word or ending" in system:
+            m = re.search(r"Clicked item: (.+)$", user)
+            item = m.group(1).strip() if m else "?"
+            return {"gloss_en": f"(demo) meaning of {item}",
+                    "ending": "-(으)면" if "면" in item else "", "lemma": ""}
         if "NEW useful" in system:
             return {"chunks": [
                 {"type": "noun_verb", "ko": k, "en": "(demo)", "gloss": "demo"}
                 for k in self._HARVEST
             ]}
         # sparring: reply with the first target so the validator passes
-        import re
         m = re.search(r"TARGET items[^{]*\{([^}]*)\}", user)
         first = ""
         if m and m.group(1).strip() and m.group(1).strip() != "(none)":

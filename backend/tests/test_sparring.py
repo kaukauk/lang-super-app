@@ -201,3 +201,31 @@ def test_harvest_prompt_carries_the_corrections() -> None:
         corrections=[{"original": "밥 먹어요", "corrected": "밥을 먹어요",
                       "note_en": "needs 을"}])
     assert "밥을 먹어요" in seen["user"] and "needs 을" in seen["user"]
+
+
+def test_lookup_uses_the_turns_own_glosses_before_the_model() -> None:
+    """The sparring reply already glosses every content word in it, so most clicks
+    are free and instant. Passing provider=None proves no call is made."""
+    out = sp.lookup_word("가요", "오늘 어디 가요?", provider=None,
+                         known_glosses={"가요": "go"})
+    assert out["gloss_en"] == "go"
+
+
+def test_lookup_falls_back_to_the_model_for_endings() -> None:
+    """Endings aren't content words, so they never appear in the turn's glosses —
+    they are exactly what has to reach the LLM."""
+    out = sp.lookup_word("들어가면", "위험한 곳에 들어가면 안 돼요", provider=DemoLLM(),
+                         known_glosses={"밥": "rice"})
+    assert out["gloss_en"] and out["ending"] == "-(으)면"
+
+
+def test_lookups_are_idempotent_per_session() -> None:
+    """Clicking the same word twice is re-reading it, not a second gap."""
+    sess = sp.start_session()
+    sp.record_lookup(sess.id, word="들어가면", context_ko="위험한 곳에 들어가면 안 돼요",
+                     gloss_en="if you enter")
+    sp.record_lookup(sess.id, word="들어가면", context_ko="다른 문장", gloss_en="something else")
+    sp.record_lookup(sess.id, word="기름", context_ko="기름이 모자라요", gloss_en="fuel")
+    rows = sp.session_lookups(sess.id)
+    assert [r["word"] for r in rows] == ["들어가면", "기름"]
+    assert rows[0]["gloss_en"] == "if you enter"      # first reading wins

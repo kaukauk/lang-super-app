@@ -18,7 +18,7 @@ from sqlmodel import select
 
 from .. import config, db
 from ..llm.client import LLMError, LLMProvider
-from ..models import SparSession, SparTurn
+from ..models import SparLookup, SparSession, SparTurn
 from . import analyzer, ingest, transcribe
 from .extraction import Chunk, dedupe_chunks, drop_citation_grammar
 
@@ -296,6 +296,72 @@ def harvest_chunks(
                                  ending=str(rc.get("ending", "")).strip(),
                                  anchor=str(rc.get("anchor", "")).strip()))
     return dedupe_chunks(drop_citation_grammar(out), known)[:max_n]
+
+
+# --- word lookup (click-to-gloss during sparring) ------------------------
+
+LOOKUP_SYSTEM = (
+    "The learner clicked a word or ending in a Korean sentence because they did not "
+    "understand it. Explain THAT item only, as it is used in THIS sentence.\n"
+    'Return ONLY JSON: {"gloss_en": "<a few words of English — the meaning here, not '
+    'a dictionary entry>", "ending": "<if the clicked item is a grammatical ending or '
+    'particle, its citation notation e.g. -(으)면 안 돼요 or 을/를; otherwise empty>", '
+    '"lemma": "<dictionary form if it is a verb/adjective, else empty>"}. '
+    "No markdown fences."
+)
+
+
+def lookup_word(
+    word: str, context_ko: str, *, provider: LLMProvider, model: Optional[str] = None,
+    known_glosses: Optional[dict[str, str]] = None,
+) -> dict[str, str]:
+    """Gloss `word` as used in `context_ko`.
+
+    Checks the glosses the turn already returned before calling the model: the
+    sparring reply carries a gloss for every content word in it, so most clicks are
+    answerable for free and instantly. Endings and particles are not content words,
+    so those are what actually reach the LLM."""
+    hit = (known_glosses or {}).get(word)
+    if hit:
+        return {"word": word, "gloss_en": hit, "ending": "", "lemma": ""}
+    data = provider.complete_json(
+        system=LOOKUP_SYSTEM, user=f"Sentence: {context_ko}\nClicked item: {word}",
+        model=model or config.SPARRING_MODEL, max_tokens=200,
+    )
+    if not isinstance(data, dict):
+        raise LLMError("lookup: response is not an object")
+    return {
+        "word": word,
+        "gloss_en": str(data.get("gloss_en", "")).strip(),
+        "ending": str(data.get("ending", "")).strip(),
+        "lemma": str(data.get("lemma", "")).strip(),
+    }
+
+
+def record_lookup(session_id: int, *, word: str, context_ko: str,
+                  gloss_en: str = "", ending: str = "") -> SparLookup:
+    """Idempotent per (session, word): clicking the same word twice is re-reading it,
+    not a second gap."""
+    with db.session_scope() as s:
+        existing = s.exec(
+            select(SparLookup).where(SparLookup.session_id == session_id,
+                                     SparLookup.word == word)).first()
+        if existing is not None:
+            return existing
+        row = SparLookup(session_id=session_id, word=word, context_ko=context_ko,
+                         gloss_en=gloss_en, ending=ending)
+        s.add(row)
+        s.flush()
+        return row
+
+
+def session_lookups(session_id: int) -> list[dict[str, str]]:
+    with db.session_scope() as s:
+        rows = s.exec(select(SparLookup)
+                      .where(SparLookup.session_id == session_id)
+                      .order_by(SparLookup.id)).all()
+    return [{"word": r.word, "context_ko": r.context_ko, "gloss_en": r.gloss_en,
+             "ending": r.ending} for r in rows]
 
 
 # --- opener: the Anchor + Prompt states ---------------------------------

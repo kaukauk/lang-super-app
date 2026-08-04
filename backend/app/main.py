@@ -368,6 +368,26 @@ def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
             "warnings": resp.warnings, "glosses": resp.glosses}
 
 
+class LookupBody(BaseModel):
+    word: str
+    context_ko: str = ""
+    # glosses the turn already returned, so a content word costs no LLM call
+    known_glosses: dict[str, str] = {}
+
+
+@app.post("/api/spar/{session_id}/lookup")
+def spar_lookup(session_id: int, body: LookupBody) -> dict[str, Any]:
+    """Click-to-gloss mid-sparring. Records the lookup so the harvest can offer it."""
+    try:
+        out = sparring.lookup_word(body.word, body.context_ko, provider=provider(),
+                                   known_glosses=body.known_glosses)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    sparring.record_lookup(session_id, word=body.word, context_ko=body.context_ko,
+                           gloss_en=out["gloss_en"], ending=out.get("ending", ""))
+    return out
+
+
 @app.post("/api/spar/{session_id}/harvest")
 def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     history = sparring.session_history(session_id)
