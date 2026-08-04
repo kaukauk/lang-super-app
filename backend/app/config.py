@@ -78,6 +78,12 @@ FFPROBE_BIN = os.environ.get("LANGAPP_FFPROBE_BIN", "ffprobe")
 # Set either to "" to disable and go back to stock yt-dlp behaviour.
 YTDLP_JS_RUNTIME = os.environ.get("LANGAPP_YTDLP_JS_RUNTIME", "auto")
 YTDLP_REMOTE_COMPONENTS = os.environ.get("LANGAPP_YTDLP_REMOTE_COMPONENTS", "ejs:github")
+# Pause between requests. Adding one video by hand never trips anything, but a bulk
+# run does: fetching a series back-to-back drew 403s within a few dozen videos and
+# then "Missing required Visitor Data", which is YouTube deciding we're a bot. A
+# second between requests is invisible for a single fetch and is what lets a long
+# run finish at all. 0 disables.
+YTDLP_SLEEP_REQUESTS = float(os.environ.get("LANGAPP_YTDLP_SLEEP_REQUESTS", "1"))
 
 # --- Whisper (faster-whisper, STT) --------------------------------------
 # large-v3 (not turbo) — turbo trades timestamp accuracy, which matters for cutting

@@ -67,6 +67,58 @@ SEGMENT_ID = 0
 _EP_PART = re.compile(r"(\d+)\s*-\s*(\d+)\s*$")
 
 
+# YouTube's ways of saying "you are a bot". They escalate: plain 403s first, then
+# demands for visitor data or cookies once it has made up its mind.
+_BLOCK_SIGNS = ("visitor data", "not a bot", "sign in to confirm", "cookies",
+                "http error 429", "http error 403")
+
+
+class Gate:
+    """A shared cooldown, because throttling is a property of the run, not the part.
+
+    When YouTube starts refusing, it refuses everything — so retrying one part on
+    its own backoff means the other workers march straight into the same wall and
+    the run burns through a season failing three seconds at a time. That is exactly
+    how parts 12-3 through 12-6 were lost: four attempts each, all inside the same
+    blocked minute, all doomed before they started.
+
+    So a block pauses every worker, and the cooldown doubles while blocks keep
+    coming. A clean download resets it, so one bad patch doesn't slow the rest of
+    the run forever."""
+
+    def __init__(self, *, base_s: float = 60.0, max_s: float = 900.0):
+        self._lock = threading.Lock()
+        self._until = 0.0
+        self._streak = 0
+        self._base, self._max = base_s, max_s
+
+    @staticmethod
+    def is_block(exc: BaseException) -> bool:
+        return any(s in str(exc).lower() for s in _BLOCK_SIGNS)
+
+    def wait(self) -> None:
+        while True:
+            with self._lock:
+                left = self._until - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(left, 5.0))
+
+    def penalise(self) -> float:
+        with self._lock:
+            self._streak += 1
+            cool = min(self._base * (2 ** (self._streak - 1)), self._max)
+            self._until = max(self._until, time.monotonic() + cool)
+            return cool
+
+    def clear(self) -> None:
+        with self._lock:
+            self._streak = 0
+
+
+GATE = Gate()
+
+
 @dataclass
 class Part:
     """One playlist entry: a single `<episode>-<part>` video."""
@@ -181,20 +233,29 @@ def download(part: Part, *, attempts: int = 4) -> Path:
     for attempt in range(attempts):
         if (existing := video_path(part)) is not None:
             return existing
+        GATE.wait()
         try:
-            return media.ensure_video(
+            video = media.ensure_video(
                 part.youtube_id,
                 url=f"https://www.youtube.com/watch?v={part.youtube_id}").video
+            GATE.clear()
+            return video
         except Exception as exc:                          # noqa: BLE001
             last = exc
-            if attempt == attempts - 1:
-                break
             # A half-written source.* would otherwise be mistaken for a good file.
             for stray in media.cache_dir(part.youtube_id).glob("source.*"):
                 stray.unlink(missing_ok=True)
-            delay = 2.0 * (2 ** attempt) + random.uniform(0, 1.5)
-            print(f"  [retry] {part.name} in {delay:.0f}s ({str(exc)[-90:]})", flush=True)
-            time.sleep(delay)
+            if attempt == attempts - 1:
+                break
+            if Gate.is_block(exc):
+                cool = GATE.penalise()
+                print(f"  [throttled] pausing {cool:.0f}s — YouTube is refusing "
+                      f"({part.name})", flush=True)
+            else:
+                delay = 2.0 * (2 ** attempt) + random.uniform(0, 1.5)
+                print(f"  [retry] {part.name} in {delay:.0f}s ({str(exc)[-90:]})",
+                      flush=True)
+                time.sleep(delay)
     raise media.MediaError(f"{part.name}: {attempts} attempts failed: {last}")
 
 
@@ -221,6 +282,7 @@ def caption_words(part: Part) -> list[transcribe.Word]:
     for attempt in range(3):
         if raw.exists():
             break
+        GATE.wait()
         cmd = [*media._ytdlp_argv(), "--skip-download", "--write-auto-subs",
                "--sub-langs", "ko", "--sub-format", "json3", "--no-progress",
                *media._js_runtime_args(),
@@ -228,11 +290,22 @@ def caption_words(part: Part) -> list[transcribe.Word]:
                f"https://www.youtube.com/watch?v={part.youtube_id}"]
         out = subprocess.run(cmd, capture_output=True, text=True)
         if raw.exists():
+            GATE.clear()
             break
         err = (out.stderr or "").strip() or (out.stdout or "").strip()
+        blocked = any(s in err.lower() for s in _BLOCK_SIGNS)
         if attempt == 2:
-            raise media.MediaError(f"no Korean auto-captions: {err[-200:]}")
-        time.sleep(2.0 * (2 ** attempt) + random.uniform(0, 1.5))
+            # Distinguish the two, because they call for different answers: a video
+            # with no caption track needs Whisper, a throttled one just needs time.
+            raise media.MediaError(
+                ("throttled, not missing: " if blocked else "no Korean auto-captions: ")
+                + err[-200:])
+        if blocked:
+            cool = GATE.penalise()
+            print(f"  [throttled] pausing {cool:.0f}s — captions refused "
+                  f"({part.name})", flush=True)
+        else:
+            time.sleep(2.0 * (2 ** attempt) + random.uniform(0, 1.5))
 
     events = json.loads(raw.read_text("utf-8")).get("events") or []
     words: list[transcribe.Word] = []
@@ -471,7 +544,13 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
                     # Not every upload has auto-captions. Falling back to Whisper
                     # costs ~45s for that one part and leaves the series complete,
                     # where failing would leave a hole you'd only find later.
-                    print(f"  [whisper] {part.name}: {exc}", flush=True)
+                    #
+                    # But only when the track is really absent: a throttled fetch
+                    # raises here too, and transcribing that locally would spend the
+                    # 45s to work around a wait, then bake the worse transcript in.
+                    if "throttled" in str(exc):
+                        raise
+                    print(f"  [whisper] {part.name}: no caption track", flush=True)
                     sentences = transcribe_part(part, whisper_fallback())
             write_transcripts(part, sentences)
         except Exception as exc:                          # noqa: BLE001
@@ -494,7 +573,9 @@ def main() -> int:
                     help="only the first N parts of each season (smoke test)")
     ap.add_argument("--download-only", action="store_true",
                     help="fetch the videos, skip transcription")
-    ap.add_argument("--workers", type=int, default=3, help="parallel downloads")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="parallel downloads — 1 by default because concurrency is "
+                         "what draws YouTube's throttling; raise it at your peril")
     ap.add_argument("--refresh", action="store_true",
                     help="re-list the playlists instead of using the saved manifest")
     ap.add_argument("--whisper", action="store_true",

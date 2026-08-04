@@ -86,6 +86,8 @@ def build_ytdlp_cmd(
     if config.YTDLP_REMOTE_COMPONENTS:
         # Fetches (and caches) the challenge-solver script the runtime executes.
         cmd += ["--remote-components", config.YTDLP_REMOTE_COMPONENTS]
+    if config.YTDLP_SLEEP_REQUESTS > 0:
+        cmd += ["--sleep-requests", str(config.YTDLP_SLEEP_REQUESTS)]
     if section:
         cmd += ["--download-sections", section, "--force-keyframes-at-cuts"]
     cmd += [url_or_id]
