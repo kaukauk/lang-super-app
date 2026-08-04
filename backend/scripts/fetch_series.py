@@ -68,9 +68,18 @@ _EP_PART = re.compile(r"(\d+)\s*-\s*(\d+)\s*$")
 
 
 # YouTube's ways of saying "you are a bot". They escalate: plain 403s first, then
-# demands for visitor data or cookies once it has made up its mind.
-_BLOCK_SIGNS = ("visitor data", "not a bot", "sign in to confirm", "cookies",
+# demands for visitor data or sign-in once it has made up its mind.
+#
+# Match only definitive phrasing. A bare "cookies" seemed reasonable and was not:
+# yt-dlp appends a "see how to pass cookies" HINT to unrelated messages, so a part
+# that merely lacked captions was read as throttled, and the run sat doubling a
+# cooldown against a video that was never coming.
+_BLOCK_SIGNS = ("visitor data", "not a bot", "sign in to confirm",
                 "http error 429", "http error 403")
+
+# The unambiguous "this video has no such track" answer. Checked first, because it
+# is a fact about the video and outranks any guess about our connection.
+_NO_TRACK = "no subtitles for the requested languages"
 
 
 class Gate:
@@ -292,8 +301,13 @@ def caption_words(part: Part) -> list[transcribe.Word]:
         if raw.exists():
             GATE.clear()
             break
-        err = (out.stderr or "").strip() or (out.stdout or "").strip()
-        blocked = any(s in err.lower() for s in _BLOCK_SIGNS)
+        # Both streams matter: yt-dlp reports a missing track on stdout as [info]
+        # and leaves stderr empty, but reports a block on stderr.
+        err = "\n".join(x.strip() for x in (out.stderr, out.stdout) if x).strip()
+        low = err.lower()
+        if _NO_TRACK in low:
+            raise media.MediaError("no Korean auto-captions: none published")
+        blocked = any(s in low for s in _BLOCK_SIGNS)
         if attempt == 2:
             # Distinguish the two, because they call for different answers: a video
             # with no caption track needs Whisper, a throttled one just needs time.
