@@ -31,7 +31,13 @@ from typing import Any, Optional
 
 from .. import config
 
-FIELDS = ["Prompt", "Chunk", "Ending", "Derivation", "Audio"]
+# Anchor and Target are separate fields with the arrow living in the TEMPLATE, the
+# way the KBA Conjugation note type does it. An arrow baked into the data would
+# freeze a formatting choice into content and, more practically, would stop a TTS
+# add-on from reading either side on its own. Every field here is either clean
+# Korean or pure notation, so audio can be generated from Chunk (or Anchor, or
+# Target) without a filter step.
+FIELDS = ["Prompt", "Chunk", "Ending", "Anchor", "Target", "Audio"]
 TEMPLATE_NAME = "Chunk Production"
 
 BLANK = "______"
@@ -142,24 +148,24 @@ class ChunkNote:
         return choose_blank(self.chunk_ko, corrected_from=self.corrected_from,
                             anchor=self.anchor)
 
-    def derivation(self) -> str:
-        """anchor -> the conjugated predicate, the way the KBA Conjugation deck shows
-        a transformation. Scoped to the predicate rather than the whole chunk, which
-        is what makes it a derivation and not a restatement.
+    def target(self) -> str:
+        """The conjugated predicate the anchor became — the right-hand side of the
+        derivation. Scoped to the predicate rather than the whole chunk, which is
+        what makes it a derivation and not a restatement.
 
         Empty unless we know the anchor: a fabricated one would teach a form the
-        learner never heard."""
+        learner never heard, and the template hides the whole row without it."""
         if not self.anchor:
             return ""
-        target = predicate_span(self.chunk_ko, self.anchor) or self.chunk_ko
-        return f"{self.anchor} → {target}"
+        return predicate_span(self.chunk_ko, self.anchor) or self.chunk_ko
 
     def fields(self) -> dict[str, str]:
         return {
             "Prompt": build_prompt(self.chunk_ko, self.blank()),
             "Chunk": self.chunk_ko,
             "Ending": self.ending,
-            "Derivation": self.derivation(),
+            "Anchor": self.anchor,
+            "Target": self.target(),
             "Audio": f"[sound:{self.audio_file}]" if self.audio_file else "",
         }
 
@@ -198,7 +204,7 @@ _FRONT = """{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
 #
 # Audio only on the back — on the front it would read the answer aloud.
 _BACK = """<div class="chunk">{{Chunk}}</div>
-{{#Derivation}}<div class="derivation">{{Derivation}}</div>{{/Derivation}}
+{{#Anchor}}<div class="derivation"><span class="anchor">{{Anchor}}</span><span class="arrow">&rarr;</span><span class="target">{{Target}}</span></div>{{/Anchor}}
 {{Audio}}
 """
 

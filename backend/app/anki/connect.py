@@ -240,6 +240,35 @@ class AnkiConnectClient:
             f"note type {model!r} has templates {existing}, none named {wanted!r} — "
             "rename one, or point LANGAPP_ANKI_MODEL at a note type this app owns")
 
+    def _reconcile_fields(self, model: str, wanted: list[str]) -> None:
+        """Bring an existing note type's field list in line with `wanted`.
+
+        Templates reference fields by name, so a field added here must exist in Anki
+        before the new template lands or it renders as nothing. Missing fields are
+        added unconditionally.
+
+        Stale fields are removed ONLY when every note leaves them empty. Removing a
+        populated field destroys that content irreversibly and Anki gives it back to
+        no one — a rename we failed to anticipate must cost a tidy note type, never
+        the learner's data."""
+        existing = list(self.invoke("modelFieldNames", modelName=model) or [])
+        if not existing:
+            return
+        for name in wanted:
+            if name not in existing:
+                self.invoke("modelFieldAdd", modelName=model, fieldName=name)
+
+        stale = [f for f in existing if f not in wanted]
+        if not stale:
+            return
+        note_ids = self.invoke("findNotes", query=f'note:"{model}"') or []
+        infos = self.invoke("notesInfo", notes=note_ids) if note_ids else []
+        for name in stale:
+            if any((n.get("fields", {}).get(name, {}) or {}).get("value", "").strip()
+                   for n in infos):
+                continue                       # carries data — leave it alone
+            self.invoke("modelFieldRemove", modelName=model, fieldName=name)
+
     def ensure_model(self, model: Optional[str] = None,
                      payload: Optional[dict[str, Any]] = None) -> None:
         """Create the note type, or push template/styling edits onto the existing
@@ -253,6 +282,8 @@ class AnkiConnectClient:
             self.invoke("createModel", **payload)
             return
         tmpl = payload["cardTemplates"][0]
+        # fields first: the template below references them by name
+        self._reconcile_fields(model, list(payload["inOrderFields"]))
         self.invoke("updateModelTemplates", model={
             "name": model,
             "templates": {

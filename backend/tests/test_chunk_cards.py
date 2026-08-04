@@ -29,7 +29,7 @@ def test_anchor_blanks_the_predicate_not_the_sentence() -> None:
     f = note("위험한 곳에 들어가면 안 돼요", anchor="들어가요", ending="-(으)면 안 돼요").fields()
     assert f["Prompt"] == "위험한 곳에 ______"
     # derivation is the transformation, not a restatement of the whole chunk
-    assert f["Derivation"] == "들어가요 → 들어가면 안 돼요"
+    assert f["Anchor"] == "들어가요" and f["Target"] == "들어가면 안 돼요"
 
 
 def test_anchor_matches_across_a_different_conjugation() -> None:
@@ -62,12 +62,17 @@ def test_no_english_on_either_side() -> None:
     # the chip narrows the front to one correct answer, so it belongs there; on the
     # back the full chunk already resolves the blank and the chip only restates
     assert "{{Ending}}" in front and "{{Ending}}" not in back
-    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Ending", "Derivation", "Audio"]
+    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Ending", "Anchor",
+                                       "Target", "Audio"]
+    # the arrow is template markup, not data: every field stays clean enough to
+    # generate audio from without a filter step
+    assert "&rarr;" in back and all("→" not in v for v in payload["inOrderFields"])
 
 
 def test_derivation_absent_without_an_anchor() -> None:
     """A guessed anchor would teach a form the learner never heard."""
-    assert note("기름이 모자라요").fields()["Derivation"] == ""
+    f = note("기름이 모자라요").fields()
+    assert f["Anchor"] == "" and f["Target"] == ""
 
 
 def test_push_creates_deck_and_model_then_adds_notes() -> None:
@@ -106,3 +111,32 @@ def test_correction_is_matched_to_its_chunk() -> None:
     assert notes[0].corrected_from == "밥 먹었어요"
     assert notes[1].corrected_from == "밥 먹었어요"      # chunk extends the correction
     assert notes[2].corrected_from == ""                # unrelated chunk untouched
+
+
+def test_audio_source_field_is_clean_korean() -> None:
+    """The reason the derivation is split: a TTS add-on pointed at Chunk must never
+    read notation or an arrow aloud."""
+    f = note("위험한 곳에 들어가면 안 돼요", anchor="들어가요", ending="-(으)면 안 돼요").fields()
+    assert f["Chunk"] == "위험한 곳에 들어가면 안 돼요"
+    for junk in ("→", "-(", "(", "_", "[sound:"):
+        assert junk not in f["Chunk"]
+    # audio lives in its own field, so regenerating it never rewrites the sentence
+    assert f["Audio"] == "" and "Audio" in f
+
+
+def test_reconcile_adds_missing_fields_and_drops_only_empty_ones() -> None:
+    """Removing a populated field destroys content Anki never gives back."""
+    ft = FakeTransport(results={
+        "modelNames": ["KoreanChunk"],
+        "modelFieldNames": ["Prompt", "Chunk", "Ending", "Derivation", "Legacy"],
+        "findNotes": [1],
+        # Derivation is empty everywhere, Legacy is not
+        "notesInfo": [{"fields": {"Derivation": {"value": ""},
+                                  "Legacy": {"value": "keep me"}}}],
+    })
+    AnkiConnectClient(transport=ft).ensure_model(
+        "KoreanChunk", payload=chunks.build_model_payload("KoreanChunk"))
+    added = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldAdd"]
+    removed = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldRemove"]
+    assert set(added) == {"Anchor", "Target", "Audio"}
+    assert removed == ["Derivation"]          # Legacy survives: it holds data
