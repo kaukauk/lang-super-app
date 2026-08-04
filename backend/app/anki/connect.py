@@ -74,6 +74,14 @@ _CSS = """.card {
 .explanation { font-size: 17px; color: #444; margin-top: 16px; line-height: 1.5; }
 video { max-width: 100%; margin: 8px auto; border-radius: 8px; }
 hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
+/* Says what the grey line under the video actually is. Without it the context
+   sentence just looks like unexplained Korean sitting below the clip. */
+.label {
+  display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #999; margin-bottom: 2px;
+}
+.hint { display: none; font-size: 13px; color: #888; margin-top: 4px; }
+.hint.show { display: block; }
 """
 
 _FRONT = """<div class="target">{{TargetKo}}</div>
@@ -82,11 +90,40 @@ _FRONT = """<div class="target">{{TargetKo}}</div>
 
 # No {{FrontSide}} and no {{TargetAudio}}: the clip carries the original audio,
 # and replaying the TTS front over it would talk across the video.
+#
+# The script is the autoplay fallback. Anki's webview is Chromium and refuses
+# unmuted autoplay without a user activation; Show Answer is clicked in the
+# reviewer's *other* webview, so this document never gets one and the clip sits
+# paused. Installing anki-addon/korean_immersion_autoplay is the real fix (it
+# clears PlaybackRequiresUserGesture). Without it, fall back to starting on the
+# first interaction — NOT to muted autoplay, which measurably fails: Chromium
+# starts the clip and then pauses it the moment you unmute.
 _BACK = """<div class="target">{{TargetKo}}</div>
-<video src="{{Clip}}" autoplay controls playsinline></video>
-{{#ContextKo}}<div class="context">{{ContextKo}}</div>{{/ContextKo}}
+<video id="ki-clip" src="{{Clip}}" autoplay controls playsinline></video>
+<div class="hint" id="ki-hint">Press any key or click to play</div>
+{{#ContextKo}}<div class="context"><span class="label">Lead-up line</span>{{ContextKo}}</div>{{/ContextKo}}
 <hr>
 <div class="explanation">{{Explanation}}</div>
+<script>
+(function () {
+  var v = document.getElementById("ki-clip");
+  var hint = document.getElementById("ki-hint");
+  if (!v) return;
+  var started = v.play();
+  if (!started || !started.catch) return;
+  started.catch(function () {
+    if (hint) hint.className = "hint show";
+    var go = function () {
+      if (hint) hint.className = "hint";
+      v.play().catch(function () {});
+      document.removeEventListener("click", go, true);
+      document.removeEventListener("keydown", go, true);
+    };
+    document.addEventListener("click", go, true);
+    document.addEventListener("keydown", go, true);
+  });
+})();
+</script>
 """
 
 

@@ -35,6 +35,18 @@ def test_model_payload_has_five_fields_and_one_template() -> None:
     assert "{{TargetKo}}" in front and "{{TargetAudio}}" in front
     assert "{{Clip}}" in back and "{{Explanation}}" in back
     assert "<video" in back and "autoplay" in back          # embedded, not an mpv handoff
+    # the grey line under the video is the lead-up sentence — say so on the card
+    assert "Lead-up line" in back and "{{ContextKo}}" in back
+
+
+def test_back_falls_back_to_click_to_play_not_muted_autoplay() -> None:
+    """Chromium refuses unmuted autoplay without a user activation, and Show Answer is
+    clicked in the reviewer's other webview. Measured against Anki's own QtWebEngine:
+    starting muted and then unmuting does NOT work — Blink pauses on unmute — so the
+    template must recover via a real interaction instead."""
+    back = build_model_payload("KoreanImmersion")["cardTemplates"][0]["Back"]
+    assert ".catch(" in back and "addEventListener" in back
+    assert "muted" not in back
     # back must NOT replay the front audio (would mask the video's own target audio)
     assert "{{FrontSide}}" not in back and "{{TargetAudio}}" not in back
 
