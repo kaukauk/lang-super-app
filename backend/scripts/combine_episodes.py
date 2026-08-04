@@ -387,16 +387,43 @@ def merge_transcripts(pieces: list[Piece]) -> list[transcribe.Sentence]:
     return out
 
 
-def write_episode(season: int, episode: int, pieces: list[Piece],
+def contiguous_runs(parts: list[Part]) -> list[list[Part]]:
+    """Split an episode at any missing part.
+
+    Three parts are blocked at source on rights claims, so some episodes arrive
+    with a hole in the middle. Joining across one would splice two non-adjacent
+    scenes into a seamless-looking cut — the kind of error that is hard to spot and
+    maddening to study against. Each unbroken run becomes its own video instead, so
+    an episode missing part 4 yields 1-3 and 5-8 rather than nothing at all.
+
+    Availability, not numbering, defines a run: a part whose video failed to
+    download breaks the sequence exactly as a missing part number does."""
+    runs: list[list[Part]] = []
+    for p in sorted(parts, key=lambda x: x.part):
+        if video_path(p) is None:
+            continue
+        if runs and p.part == runs[-1][-1].part + 1:
+            runs[-1].append(p)
+        else:
+            runs.append([p])
+    return runs
+
+
+def run_stem(episode: int, index: int, total: int) -> str:
+    """`8` when the episode is whole, `8a` / `8b` when it came in pieces."""
+    return str(episode) if total == 1 else f"{episode}{chr(ord('a') + index)}"
+
+
+def write_episode(season: int, stem: str, episode: int, pieces: list[Piece],
                   sentences: list[transcribe.Sentence]) -> dict:
     d = episodes_dir(season)
     d.mkdir(parents=True, exist_ok=True)
-    stem = f"{episode}"
     (d / f"{stem}.txt").write_text(
         "\n".join(s.text.strip() for s in sentences) + "\n", encoding="utf-8")
     (d / f"{stem}.srt").write_text(to_srt(sentences), encoding="utf-8")
     meta = {
-        "season": season, "episode": episode,
+        "season": season, "episode": episode, "stem": stem,
+        "first_part": pieces[0].part.part, "last_part": pieces[-1].part.part,
         "duration_s": round(sum(p.kept_s for p in pieces), 3),
         "parts": [{"part": p.part.part, "youtube_id": p.part.youtube_id,
                    "duration_s": round(p.duration_s, 3),
@@ -511,49 +538,56 @@ def main() -> int:
     if not args.dry_run and not args.no_backup:
         backup_raw(args.season, [p for e in wanted for p in by_ep.get(e, [])])
 
-    made, skipped = 0, []
+    made: int = 0
+    skipped: list[str] = []
     for ep in wanted:
         eps = sorted(by_ep.get(ep, []), key=lambda x: x.part)
         if not eps:
             continue
-        missing = [p.name for p in eps if video_path(p) is None]
-        if missing:
-            # Joining around a hole would silently splice two non-adjacent scenes
-            # together, which is worse than not producing the episode.
-            print(f"  ep {ep}: SKIPPED — missing part(s) {', '.join(missing)}")
-            skipped.append(ep)
+        runs = contiguous_runs(eps)
+        if not runs:
+            print(f"  ep {ep}: SKIPPED — no parts downloaded")
+            skipped.append(str(ep))
             continue
+        if len(runs) > 1:
+            have = {p.part for p in eps if video_path(p) is not None}
+            missing = sorted({p.part for p in eps} - have)
+            print(f"  ep {ep}: split into {len(runs)} — missing part(s) "
+                  f"{', '.join(str(m) for m in missing)}")
 
-        pieces = plan_episode(eps)
-        seams = [f"{p.part.name}:{p.trim_start_s:.2f}s({p.seam_score:.2f})"
-                 for p in pieces if p.trim_start_s > 0]
-        total = sum(p.kept_s for p in pieces)
-        print(f"  ep {ep}: {len(pieces)} parts, {total / 60:.1f} min"
-              + (f", trimmed {' '.join(seams)}" if seams else ", no overlaps"))
-        if args.dry_run:
-            continue
+        for ri, run in enumerate(runs):
+            stem = run_stem(ep, ri, len(runs))
+            pieces = plan_episode(run)
+            seams = [f"{p.part.name}:{p.trim_start_s:.2f}s({p.seam_score:.2f})"
+                     for p in pieces if p.trim_start_s > 0]
+            total = sum(p.kept_s for p in pieces)
+            print(f"  ep {stem}: parts {run[0].part}-{run[-1].part}, "
+                  f"{total / 60:.1f} min"
+                  + (f", trimmed {' '.join(seams)}" if seams else ", no overlaps"))
+            if args.dry_run:
+                continue
 
-        out = episodes_dir(args.season) / f"{ep}.mp4"
-        try:
-            concat_video(pieces, out)
-            sentences = merge_transcripts(pieces)
-            write_episode(args.season, ep, pieces, sentences)
-            actual = media.probe_duration(out)
-        except Exception as exc:                          # noqa: BLE001
-            # One bad episode used to abort the run: episode 13 raised and took
-            # 14-20 with it, so a single fixable fault cost seven episodes.
-            print(f"  ep {ep}: FAILED — {type(exc).__name__}: {str(exc)[-200:]}")
-            out.unlink(missing_ok=True)     # never leave a half-written episode
-            skipped.append(ep)
-            continue
-        drift = actual - total
-        # A join that lands more than a second from the plan means the trim or the
-        # concat did something other than intended, and every timestamp after it
-        # is wrong. Say so rather than let it pass as success.
-        flag = "  <-- CHECK" if abs(drift) > 1.0 else ""
-        print(f"        wrote {out.name}: {actual / 60:.1f} min, "
-              f"{len(sentences)} sentences, drift {drift:+.2f}s{flag}", flush=True)
-        made += 1
+            out = episodes_dir(args.season) / f"{stem}.mp4"
+            try:
+                concat_video(pieces, out)
+                sentences = merge_transcripts(pieces)
+                write_episode(args.season, stem, ep, pieces, sentences)
+                actual = media.probe_duration(out)
+            except Exception as exc:                      # noqa: BLE001
+                # One bad episode used to abort the run: episode 13 raised and took
+                # 14-20 with it, so a single fixable fault cost seven episodes.
+                print(f"  ep {stem}: FAILED — {type(exc).__name__}: {str(exc)[-200:]}")
+                out.unlink(missing_ok=True)   # never leave a half-written episode
+                skipped.append(stem)
+                continue
+            drift = actual - total
+            # A join landing more than a second from the plan means the trim or the
+            # concat did something other than intended, and every timestamp after
+            # it is wrong. Say so rather than let it pass as success.
+            flag = "  <-- CHECK" if abs(drift) > 1.0 else ""
+            print(f"        wrote {out.name}: {actual / 60:.1f} min, "
+                  f"{len(sentences)} sentences, drift {drift:+.2f}s{flag}", flush=True)
+            made += 1
 
     print(f"\n{made} episode(s) written to {episodes_dir(args.season)}")
     if skipped:
