@@ -35,22 +35,65 @@ def _correction_for(chunk_ko: str, corrections: list[dict]) -> str:
     return ""
 
 
+def _context_for(chunk_ko: str, history: list[dict]) -> str:
+    """The assistant line the learner was answering when this chunk came up.
+
+    Cues the card from meaning instead of from a Korean frame the learner will never
+    have when speaking — the main weakness of a bare cloze. Korean, so retrieval
+    stays inside the language."""
+    last_assistant = ""
+    for turn in history or []:
+        text = (turn.get("text") or "").strip()
+        if turn.get("role") == "assistant":
+            last_assistant = text
+        elif turn.get("role") == "user" and text and chunk_ko.strip() in text:
+            return last_assistant
+    return ""
+
+
 def build_chunk_notes(
     chunks: list[Chunk], *, corrections: Optional[list[dict]] = None,
-    tags: Optional[list[str]] = None,
+    history: Optional[list[dict]] = None, tags: Optional[list[str]] = None,
 ) -> list[ChunkNote]:
     return [
         ChunkNote(
             chunk_ko=c.ko, ending=c.ending, anchor=c.anchor,
             corrected_from=_correction_for(c.ko, corrections or []),
+            context_ko=_context_for(c.ko, history or []),
             tags=list(tags or ["korean-chunk"]),
         )
         for c in chunks if c.ko.strip()
     ]
 
 
+def notes_from_lookups(lookups: list[dict], *, tags: Optional[list[str]] = None,
+                       ) -> list[ChunkNote]:
+    """Cards from words the learner clicked mid-sparring.
+
+    The clicked word is the blank and the sentence it appeared in is the chunk — the
+    question already carries its own context, so nothing extra is needed. These keep
+    the English gloss, unlike every other card here: a click is a COMPREHENSION gap,
+    and a cloze over a word whose meaning you learned seconds ago can be completed by
+    pattern-matching the Korean frame without the meaning ever sticking. The gloss is
+    back-only, so it is never a translation prompt."""
+    out: list[ChunkNote] = []
+    for lk in lookups or []:
+        word = str(lk.get("word", "")).strip()
+        context = str(lk.get("context_ko", "")).strip()
+        if not word or not context or word == context:
+            continue
+        out.append(ChunkNote(
+            chunk_ko=context, blank_on=word,
+            ending=str(lk.get("ending", "")).strip(),
+            gloss_en=str(lk.get("gloss_en", "")).strip(),
+            tags=list(tags or ["korean-chunk", "lookup"]),
+        ))
+    return out
+
+
 def push_chunks(
     chunks: list[Chunk], *, corrections: Optional[list[dict]] = None,
+    history: Optional[list[dict]] = None, lookups: Optional[list[dict]] = None,
     anki: Optional[AnkiConnectClient] = None,
     tts_provider: Optional[tts.TTS] = None,
     deck: Optional[str] = None, model: Optional[str] = None,
@@ -65,7 +108,9 @@ def push_chunks(
     anki = anki or AnkiConnectClient()
 
     tags = ["korean-chunk"] + ([f"spar{session_id}"] if session_id is not None else [])
-    notes = build_chunk_notes(chunks, corrections=corrections, tags=tags)
+    notes = (build_chunk_notes(chunks, corrections=corrections, history=history,
+                               tags=tags)
+             + notes_from_lookups(lookups, tags=tags + ["lookup"]))
     if not notes:
         return {"pushed": 0, "skipped": 0, "notes": []}
 

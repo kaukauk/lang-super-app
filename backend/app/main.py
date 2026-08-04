@@ -393,10 +393,11 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     history = sparring.session_history(session_id)
     known = srs.known_surface_forms(deck_name=body.deck)
     corrections = sparring.session_corrections(session_id)
+    lookups = sparring.session_lookups(session_id)
     chunks = sparring.harvest_chunks(history=history, provider=provider(), known=known,
                                      corrections=corrections)
     out: dict[str, Any] = {"chunks": [c.as_dict() for c in chunks],
-                           "corrections": corrections}
+                           "corrections": corrections, "lookups": lookups}
     if body.accept:
         cards = extraction.accept_chunks(chunks, today_ord=body.today, deck_name=body.deck)
         out["accepted_card_ids"] = [c.id for c in cards]
@@ -405,8 +406,8 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
         # discard a harvest the learner just earned.
         try:
             out["anki"] = chunkcards.push_chunks(
-                chunks, corrections=corrections, session_id=session_id,
-                tts_provider=tts_provider())
+                chunks, corrections=corrections, history=history, lookups=lookups,
+                session_id=session_id, tts_provider=tts_provider())
         except Exception as exc:
             out["anki"] = {"error": str(exc), "pushed": 0}
     return out

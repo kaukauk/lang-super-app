@@ -37,7 +37,7 @@ from .. import config
 # add-on from reading either side on its own. Every field here is either clean
 # Korean or pure notation, so audio can be generated from Chunk (or Anchor, or
 # Target) without a filter step.
-FIELDS = ["Prompt", "Chunk", "Ending", "Anchor", "Target", "Audio"]
+FIELDS = ["Prompt", "Chunk", "Context", "Ending", "Anchor", "Target", "Gloss", "Audio"]
 TEMPLATE_NAME = "Chunk Production"
 
 BLANK = "______"
@@ -97,17 +97,26 @@ def predicate_span(chunk_ko: str, anchor: str) -> str:
     return " ".join(_eojeols(chunk_ko)[i:]) if i >= 0 else ""
 
 
-def choose_blank(chunk_ko: str, *, corrected_from: str = "", anchor: str = "") -> str:
+def choose_blank(chunk_ko: str, *, blank_on: str = "", corrected_from: str = "",
+                 anchor: str = "") -> str:
     """Pick the span to hide on the front, best evidence first:
 
-    1. what a correction changed — the demonstrated gap
-    2. the predicate the anchor became, when we are explaining a conjugation
-    3. the final word, which in a Korean chunk is the predicate
+    1. an explicit target — the word the learner clicked, which IS the gap
+    2. what a correction changed — the demonstrated gap
+    3. the predicate the anchor became, when we are explaining a conjugation
+    4. the final word, which in a Korean chunk is the predicate
 
     Never returns the whole chunk: a card with nothing showing is not a prompt."""
     words = _eojeols(chunk_ko)
     if not words:
         return ""
+    if blank_on and blank_on in chunk_ko and blank_on.strip() != chunk_ko.strip():
+        # widen a clicked fragment to its whole word: clicking 하고 in "하고 싶어요"
+        # means "I don't know this construction", not "hide these two syllables"
+        for word in words:
+            if blank_on in word and word != chunk_ko.strip():
+                return word
+        return blank_on
     if corrected_from:
         span = changed_span(corrected_from, chunk_ko)
         if span and span != chunk_ko.strip():
@@ -141,12 +150,15 @@ class ChunkNote:
     ending: str = ""            # citation notation, e.g. -(으)면 안 돼요 — a LABEL
     anchor: str = ""            # plain form the ending was attached to, e.g. 들어가요
     corrected_from: str = ""    # the learner's original wording, when there was one
+    blank_on: str = ""          # the clicked word, for lookup-derived cards
+    context_ko: str = ""        # the sparring line this answered — cues from meaning
+    gloss_en: str = ""          # ONLY for chunks born from a click-to-gloss lookup
     audio_file: str = ""        # TTS of the full chunk, in collection.media
     tags: list[str] = field(default_factory=list)
 
     def blank(self) -> str:
-        return choose_blank(self.chunk_ko, corrected_from=self.corrected_from,
-                            anchor=self.anchor)
+        return choose_blank(self.chunk_ko, blank_on=self.blank_on,
+                            corrected_from=self.corrected_from, anchor=self.anchor)
 
     def target(self) -> str:
         """The conjugated predicate the anchor became — the right-hand side of the
@@ -163,9 +175,11 @@ class ChunkNote:
         return {
             "Prompt": build_prompt(self.chunk_ko, self.blank()),
             "Chunk": self.chunk_ko,
+            "Context": self.context_ko,
             "Ending": self.ending,
             "Anchor": self.anchor,
             "Target": self.target(),
+            "Gloss": self.gloss_en,
             "Audio": f"[sound:{self.audio_file}]" if self.audio_file else "",
         }
 
@@ -182,6 +196,12 @@ _CSS = """.card {
   background: #edf2f7; border-radius: 999px; padding: 3px 12px; margin-bottom: 14px;
 }
 .chunk { font-size: 30px; font-weight: 600; line-height: 1.6; }
+/* The line this answered. Small and above the prompt: it is the cue, not the task,
+   and a Korean cue keeps retrieval inside the language. */
+.context { font-size: 17px; color: #a0aec0; margin-bottom: 12px; line-height: 1.4; }
+/* Present only on cards born from a click-to-gloss lookup, where the learner did
+   not know the meaning. Back only — never a translation prompt. */
+.gloss { font-size: 16px; color: #718096; margin-top: 14px; font-style: italic; }
 .prompt { font-size: 30px; font-weight: 600; line-height: 1.6; color: #2d3748; }
 .derivation { font-size: 18px; color: #718096; margin-top: 14px; }
 .arrow { margin: 0 8px; color: #a0aec0; }
@@ -190,7 +210,8 @@ hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
 
 # No English on either side, matching the KBA decks. The front is a production
 # prompt: the chip names the pattern, the blank is what you have to supply.
-_FRONT = """{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
+_FRONT = """{{#Context}}<div class="context">{{Context}}</div>{{/Context}}
+{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
 <div class="prompt">{{Prompt}}</div>
 """
 
@@ -205,6 +226,7 @@ _FRONT = """{{#Ending}}<div class="chip">{{Ending}}</div>{{/Ending}}
 # Audio only on the back — on the front it would read the answer aloud.
 _BACK = """<div class="chunk">{{Chunk}}</div>
 {{#Anchor}}<div class="derivation"><span class="anchor">{{Anchor}}</span><span class="arrow">&rarr;</span><span class="target">{{Target}}</span></div>{{/Anchor}}
+{{#Gloss}}<div class="gloss">{{Gloss}}</div>{{/Gloss}}
 {{Audio}}
 """
 

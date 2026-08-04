@@ -53,17 +53,17 @@ def test_single_word_chunk_is_not_blanked_into_nothing() -> None:
 def test_no_english_on_either_side() -> None:
     payload = chunks.build_model_payload("KoreanChunk")
     front, back = payload["cardTemplates"][0]["Front"], payload["cardTemplates"][0]["Back"]
-    # no English-bearing field exists to reference; Ending/Derivation are Korean
-    assert not {"English", "Gloss", "Meaning"} & set(payload["inOrderFields"])
-    for side in (front, back):
-        assert "{{English}}" not in side and "{{Gloss}}" not in side
+    # Gloss exists but is back-only and populated only for lookup-derived cards,
+    # where the learner explicitly asked for the English. It is never a prompt.
+    assert "{{Gloss}}" not in front and "{{Gloss}}" in back
+    assert "{{English}}" not in front and "{{English}}" not in back
     assert "{{Prompt}}" in front and "{{Audio}}" not in front   # audio would read the answer
     assert "{{Chunk}}" in back and "{{Audio}}" in back
     # the chip narrows the front to one correct answer, so it belongs there; on the
     # back the full chunk already resolves the blank and the chip only restates
     assert "{{Ending}}" in front and "{{Ending}}" not in back
-    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Ending", "Anchor",
-                                       "Target", "Audio"]
+    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Context", "Ending",
+                                       "Anchor", "Target", "Gloss", "Audio"]
     # the arrow is template markup, not data: every field stays clean enough to
     # generate audio from without a filter step
     assert "&rarr;" in back and all("→" not in v for v in payload["inOrderFields"])
@@ -138,5 +138,53 @@ def test_reconcile_adds_missing_fields_and_drops_only_empty_ones() -> None:
         "KoreanChunk", payload=chunks.build_model_payload("KoreanChunk"))
     added = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldAdd"]
     removed = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldRemove"]
-    assert set(added) == {"Anchor", "Target", "Audio"}
+    assert set(added) == {"Context", "Anchor", "Target", "Gloss", "Audio"}
     assert removed == ["Derivation"]          # Legacy survives: it holds data
+
+
+def test_lookup_card_blanks_the_clicked_word_in_its_question() -> None:
+    """Your shape: the clicked word is the cloze, the AI's question is the chunk."""
+    notes = chunkcards.notes_from_lookups([
+        {"word": "하고", "context_ko": "오늘 뭐 하고 싶어요?",
+         "gloss_en": "want to do", "ending": "-고 싶다"}])
+    f = notes[0].fields()
+    assert f["Prompt"] == "오늘 뭐 ______ 싶어요?"
+    assert f["Chunk"] == "오늘 뭐 하고 싶어요?"
+    assert f["Ending"] == "-고 싶다"
+
+
+def test_clicked_fragment_widens_to_its_word() -> None:
+    """Clicking 하고 means "I don't know this construction", not "hide two syllables"."""
+    assert chunks.choose_blank("오늘 뭐 하고 싶어요?", blank_on="하고") == "하고"
+    assert chunks.choose_blank("밥을 먹었어요", blank_on="밥") == "밥을"
+
+
+def test_only_lookup_cards_carry_english() -> None:
+    """A click is a comprehension gap — a cloze over a word learned seconds ago can be
+    pattern-completed without the meaning sticking. Correction cards keep no English."""
+    lookup = chunkcards.notes_from_lookups(
+        [{"word": "하고", "context_ko": "오늘 뭐 하고 싶어요?", "gloss_en": "want to do"}])
+    assert lookup[0].fields()["Gloss"] == "want to do"
+    corrected = chunkcards.build_chunk_notes(
+        [Chunk(type="sentence", ko="밥을 먹었어요", en="ate rice")],
+        corrections=[{"original": "밥 먹었어요", "corrected": "밥을 먹었어요"}])
+    assert corrected[0].fields()["Gloss"] == ""      # en is deliberately not carried
+
+
+def test_context_is_the_line_the_chunk_answered() -> None:
+    """Cues the card from meaning rather than a Korean frame you'll never have when
+    speaking — the main weakness of a bare cloze."""
+    history = [
+        {"role": "assistant", "text": "어제 뭐 했어요?"},
+        {"role": "user", "text": "저는 밥을 먹었어요"},
+        {"role": "assistant", "text": "맛있었어요?"},
+    ]
+    notes = chunkcards.build_chunk_notes(
+        [Chunk(type="sentence", ko="밥을 먹었어요", en="")], history=history)
+    assert notes[0].fields()["Context"] == "어제 뭐 했어요?"
+
+
+def test_lookup_without_a_usable_context_is_dropped() -> None:
+    # a word with no sentence around it would blank into an empty card
+    assert chunkcards.notes_from_lookups([{"word": "밥", "context_ko": ""}]) == []
+    assert chunkcards.notes_from_lookups([{"word": "밥", "context_ko": "밥"}]) == []
