@@ -12,10 +12,15 @@ second code path. Human-readable names live alongside as a manifest and as
 transcript copies under `.media_cache/series/s01/1-1.*`, because `dQw4w9WgXcQ`
 tells you nothing about which part of which episode you are looking at.
 
-These videos carry no YouTube captions, so the transcript has to come from
-Whisper. That is the slow half by a wide margin — a download takes seconds, a
-transcription tens of seconds — so downloads run in a small thread pool that
-stays ahead of the single GPU-bound transcriber.
+Transcripts come from YouTube's Korean auto-captions by default — about two
+seconds a part against Whisper's forty-five, which is the difference between
+twenty minutes and five hours over a whole series. They carry per-word timings,
+so clip cutting still works; what they lack is punctuation, which the sentence
+grouper would rather have. `--whisper` transcribes locally instead, and is worth
+spending on the parts you actually build cards from.
+
+Downloads run in a small thread pool, which matters most under --whisper: there
+the GPU is the bottleneck and the pool keeps it fed.
 
 Resumable by design: every step checks for its own output first, so re-running
 after a crash, a network drop, or a Ctrl-C costs only what was actually lost.
@@ -32,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import random
 import re
 import subprocess
 import sys
@@ -120,6 +126,16 @@ def list_playlist(season: int) -> list[Part]:
         parts.append(Part(season=season, episode=int(m.group(1)), part=int(m.group(2)),
                           youtube_id=vid, title=title, index=int(idx or 0)))
 
+    # Titles read "<series> N권 <episode>-<part>", so the volume is stated in every
+    # title. Cross-check it against the playlist we think we're on: if a playlist id
+    # ever points somewhere unexpected, this catches it here rather than after 150
+    # videos have been filed under the wrong season.
+    volumes = {int(m.group(1)) for p in parts
+               if (m := re.search(r"(\d+)\s*권", p.title))}
+    if volumes and volumes != {season}:
+        print(f"  [warn] season {season} playlist has volume(s) {sorted(volumes)} "
+              f"in its titles — check the playlist id")
+
     if unparsed:
         print(f"  [skip] {len(unparsed)} entries with no <episode>-<part> in the title:")
         for u in unparsed:
@@ -153,17 +169,138 @@ def video_path(part: Part) -> Optional[Path]:
     return next((p for p in sorted(d.glob("source.*")) if p.suffix != ".part"), None)
 
 
-def download(part: Part) -> Path:
-    if (existing := video_path(part)) is not None:
-        return existing
-    paths = media.ensure_video(part.youtube_id,
-                               url=f"https://www.youtube.com/watch?v={part.youtube_id}")
-    return paths.video
+def download(part: Part, *, attempts: int = 4) -> Path:
+    """Fetch one part, retrying on the transient failures a 400-video run will hit.
+
+    YouTube rate-limits a few requests into a run and answers 403; the same URL
+    downloads fine seconds later. Without a retry a single blip skips that part
+    permanently, and you don't find out until you sit down to watch episode 1 and
+    it's missing its fourth minute. Backoff is exponential and jittered so
+    concurrent workers that all get throttled at once don't march back in step."""
+    last: Optional[Exception] = None
+    for attempt in range(attempts):
+        if (existing := video_path(part)) is not None:
+            return existing
+        try:
+            return media.ensure_video(
+                part.youtube_id,
+                url=f"https://www.youtube.com/watch?v={part.youtube_id}").video
+        except Exception as exc:                          # noqa: BLE001
+            last = exc
+            if attempt == attempts - 1:
+                break
+            # A half-written source.* would otherwise be mistaken for a good file.
+            for stray in media.cache_dir(part.youtube_id).glob("source.*"):
+                stray.unlink(missing_ok=True)
+            delay = 2.0 * (2 ** attempt) + random.uniform(0, 1.5)
+            print(f"  [retry] {part.name} in {delay:.0f}s ({str(exc)[-90:]})", flush=True)
+            time.sleep(delay)
+    raise media.MediaError(f"{part.name}: {attempts} attempts failed: {last}")
+
+
+def caption_words(part: Part) -> list[transcribe.Word]:
+    """YouTube's own Korean auto-captions, as a word stream.
+
+    Twenty times faster than running Whisper and close in coverage — on the part
+    measured, 708 transcribed characters against Whisper's 704. json3 is the format
+    worth asking for: unlike vtt it carries a per-word offset inside each caption
+    event, and per-word timing is what the clip cutter needs.
+
+    What it does NOT carry is punctuation, not one mark against Whisper's 37. That
+    matters because sentence grouping looks for terminal punctuation first; here it
+    falls through to the Korean-ender-plus-pause rule, which is a weaker signal.
+    Hence --whisper: captions to get the series usable, Whisper for the parts you
+    actually build cards from."""
+    d = media.cache_dir(part.youtube_id)
+    d.mkdir(parents=True, exist_ok=True)
+    raw = d / "captions.ko.json3"
+    # Caption fetches get 403'd by the same rate limiting as video downloads, and a
+    # throttled request looks exactly like a video that has no captions. Retry
+    # before concluding the track is missing, or a busy moment silently downgrades
+    # a part to Whisper.
+    for attempt in range(3):
+        if raw.exists():
+            break
+        cmd = [*media._ytdlp_argv(), "--skip-download", "--write-auto-subs",
+               "--sub-langs", "ko", "--sub-format", "json3", "--no-progress",
+               *media._js_runtime_args(),
+               "-o", str(d / "captions.%(ext)s"),
+               f"https://www.youtube.com/watch?v={part.youtube_id}"]
+        out = subprocess.run(cmd, capture_output=True, text=True)
+        if raw.exists():
+            break
+        err = (out.stderr or "").strip() or (out.stdout or "").strip()
+        if attempt == 2:
+            raise media.MediaError(f"no Korean auto-captions: {err[-200:]}")
+        time.sleep(2.0 * (2 ** attempt) + random.uniform(0, 1.5))
+
+    events = json.loads(raw.read_text("utf-8")).get("events") or []
+    words: list[transcribe.Word] = []
+    for ev in events:
+        base = ev.get("tStartMs", 0)
+        for seg in ev.get("segs") or []:
+            text = seg.get("utf8", "")
+            if not text.strip():
+                continue
+            start = (base + seg.get("tOffsetMs", 0)) / 1000.0
+            # json3 gives a start per word but no end; the next word's start is the
+            # best available bound, and the last word gets the event's duration.
+            words.append(transcribe.Word(text=text, start_s=start, end_s=start))
+    for i, w in enumerate(words[:-1]):
+        w.end_s = max(w.start_s, words[i + 1].start_s)
+    if words:
+        last_ms = events[-1].get("tStartMs", 0) + events[-1].get("dDurationMs", 2000)
+        words[-1].end_s = max(words[-1].start_s, last_ms / 1000.0)
+    return words
+
+
+_WHISPER: Optional[transcribe.Transcriber] = None
+
+
+def whisper_fallback() -> transcribe.Transcriber:
+    """Whisper, built on first use only. The model is a heavy load, and a
+    captions-only run must not pay for it just in case."""
+    global _WHISPER
+    if _WHISPER is None:
+        _WHISPER = transcribe.WhisperTranscriber()
+    return _WHISPER
+
+
+def transcribe_from_captions(part: Part) -> list[transcribe.Sentence]:
+    cached = transcribe.load_cached(part.youtube_id, SEGMENT_ID)
+    if cached:
+        return cached
+    sentences = transcribe.group_sentences(caption_words(part))
+    transcribe.save_cache(part.youtube_id, SEGMENT_ID, sentences)
+    return sentences
 
 
 def transcript_paths(part: Part) -> dict[str, Path]:
     d = series_dir(part.season)
     return {ext: d / f"{part.name}.{ext}" for ext in ("txt", "srt", "json")}
+
+
+def link_video(part: Part) -> Optional[Path]:
+    """Name the downloaded file `s01/1-4.mp4` alongside its transcript.
+
+    Keeping the videos is the point of this script, and `.media_cache/mcyw2G9laVg/
+    source.mp4` tells you nothing about which part of which episode it is. A symlink
+    rather than a copy or a move: the canonical path is what the rest of the app
+    resolves by youtube id, so duplicating four gigabytes to rename it would be
+    wasteful and moving it would break every other caller."""
+    src = video_path(part)
+    if src is None:
+        return None
+    link = series_dir(part.season) / f"{part.name}{src.suffix}"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.resolve() == src.resolve():
+            return link
+        link.unlink()
+    elif link.exists():
+        return link          # a real file someone put there; leave it alone
+    link.symlink_to(src)
+    return link
 
 
 def transcribe_part(part: Part, transcriber: transcribe.Transcriber) -> list[transcribe.Sentence]:
@@ -223,7 +360,13 @@ def write_transcripts(part: Part, sentences: list[transcribe.Sentence]) -> None:
 
 
 def is_done(part: Part) -> bool:
-    return all(p.exists() for p in transcript_paths(part).values())
+    """Done means the video is on disk AND the transcript is written.
+
+    The video is checked too, not just the transcript: keeping the videos is the
+    point, so a part whose file went missing should be re-fetched rather than
+    counted as complete on the strength of a transcript it left behind."""
+    return (video_path(part) is not None
+            and all(p.exists() for p in transcript_paths(part).values()))
 
 
 # --- driver --------------------------------------------------------------
@@ -281,7 +424,7 @@ def prefetch(parts: list[Part], workers: int) -> Iterator[Part]:
 
 
 def run_season(season: int, *, limit: Optional[int], download_only: bool,
-               workers: int, refresh: bool, fake: bool) -> dict[str, int]:
+               workers: int, refresh: bool, fake: bool, whisper: bool) -> dict[str, int]:
     print(f"\n=== Season {season} ===")
     parts = None if refresh else load_manifest(season)
     if parts is None:
@@ -293,24 +436,43 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
     if limit:
         parts = parts[:limit]
 
+    # Link everything already on disk, not just what this run fetches — otherwise
+    # parts downloaded before the naming existed stay unnamed forever.
+    for p in parts:
+        link_video(p)
+
     pending = [p for p in parts if not is_done(p)]
     if len(pending) < len(parts):
         print(f"  {len(parts) - len(pending)} already done, {len(pending)} to go")
     if not pending:
         return {"done": len(parts), "failed": 0}
 
-    transcriber: transcribe.Transcriber = (
-        transcribe.FakeTranscriber() if fake else transcribe.WhisperTranscriber())
+    transcriber: Optional[transcribe.Transcriber] = None
+    if fake:
+        transcriber = transcribe.FakeTranscriber()
+    elif whisper:
+        transcriber = transcribe.WhisperTranscriber()
 
     stats = {"done": len(parts) - len(pending), "failed": 0}
     started = time.monotonic()
     for i, part in enumerate(prefetch(pending, workers), 1):
+        link_video(part)
         if download_only:
             print(f"  [{i}/{len(pending)}] {part.name} downloaded")
             stats["done"] += 1
             continue
         try:
-            sentences = transcribe_part(part, transcriber)
+            if transcriber is not None:
+                sentences = transcribe_part(part, transcriber)
+            else:
+                try:
+                    sentences = transcribe_from_captions(part)
+                except media.MediaError as exc:
+                    # Not every upload has auto-captions. Falling back to Whisper
+                    # costs ~45s for that one part and leaves the series complete,
+                    # where failing would leave a hole you'd only find later.
+                    print(f"  [whisper] {part.name}: {exc}", flush=True)
+                    sentences = transcribe_part(part, whisper_fallback())
             write_transcripts(part, sentences)
         except Exception as exc:                          # noqa: BLE001
             print(f"  [fail] {part.name}: {type(exc).__name__}: {exc}")
@@ -335,6 +497,9 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=3, help="parallel downloads")
     ap.add_argument("--refresh", action="store_true",
                     help="re-list the playlists instead of using the saved manifest")
+    ap.add_argument("--whisper", action="store_true",
+                    help="transcribe with Whisper instead of YouTube's auto-captions: "
+                         "~20x slower, but punctuated and generally more accurate")
     ap.add_argument("--fake", action="store_true",
                     help="canned transcripts, for exercising the plumbing offline")
     args = ap.parse_args()
@@ -342,7 +507,8 @@ def main() -> int:
     totals = {"done": 0, "failed": 0}
     for season in args.season:
         s = run_season(season, limit=args.limit, download_only=args.download_only,
-                       workers=args.workers, refresh=args.refresh, fake=args.fake)
+                       workers=args.workers, refresh=args.refresh, fake=args.fake,
+                       whisper=args.whisper)
         for k in totals:
             totals[k] += s[k]
         print(f"  season {season}: {s['done']} done, {s['failed']} failed")
