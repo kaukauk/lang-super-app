@@ -269,26 +269,60 @@ def concat_video(pieces: list[Piece], out: Path) -> None:
     seeking a copy lands on the nearest keyframe rather than the requested time.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td)
-        codecs = stream_codecs(pieces[0].video)
-        inputs: list[Path] = []
-        for i, pc in enumerate(pieces):
-            if pc.trim_start_s <= 0:
-                inputs.append(pc.video)
-                continue
-            cut = tmp / f"trim{i}.mp4"
-            trim_head(pc.video, pc.trim_start_s, pc.duration_s, cut, codecs)
-            inputs.append(cut)
+    if any(pc.trim_start_s > 0 for pc in pieces):
+        _concat_filter(pieces, out)
+    else:
+        _concat_copy(pieces, out)
 
-        listing = tmp / "concat.txt"
-        listing.write_text("".join(f"file '{p.resolve()}'\n" for p in inputs),
+
+def _concat_copy(pieces: list[Piece], out: Path) -> None:
+    """Untrimmed episodes: stream-copy, which is instant and lossless.
+
+    Safe here precisely because nothing was re-encoded — every part came from the
+    same downloader with identical codec parameters, which is what the concat
+    demuxer requires."""
+    with tempfile.TemporaryDirectory() as td:
+        listing = Path(td) / "concat.txt"
+        listing.write_text("".join(f"file '{pc.video.resolve()}'\n" for pc in pieces),
                            encoding="utf-8")
         cmd = [config.FFMPEG_BIN, "-y", "-f", "concat", "-safe", "0",
                "-i", str(listing), "-c", "copy", "-movflags", "+faststart", str(out)]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise media.MediaError(f"concat failed: {(proc.stderr or '')[-400:]}")
+
+
+def _concat_filter(pieces: list[Piece], out: Path) -> None:
+    """Trimmed episodes: one pass through the concat filter, re-encoding uniformly.
+
+    The obvious approach — re-encode just the trimmed piece, stream-copy the rest —
+    does not work, and fails in a way worth recording. `-c copy` concatenation
+    requires every input to share codec parameters exactly, but these downloads are
+    h264 Main profile while libx264 defaults to High. The mismatch does not raise:
+    episode 12 muxed "successfully" at 64.9 minutes instead of 22.6, with a video
+    stream claiming 3893s against 2542s of audio, and the next episode then died
+    with "Error muxing a packet".
+
+    Re-encoding every piece in a single pass makes the parameters identical by
+    construction. It costs a minute or so per episode and one generation of quality
+    on material already compressed by YouTube, which is the right trade for joins
+    that are actually correct. `-ss` before each `-i` drops the duplicated head."""
+    cmd = [config.FFMPEG_BIN, "-y"]
+    for pc in pieces:
+        if pc.trim_start_s > 0:
+            cmd += ["-ss", f"{pc.trim_start_s:.3f}"]
+        cmd += ["-i", str(pc.video)]
+    streams = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(pieces)))
+    cmd += [
+        "-filter_complex", f"{streams}concat=n={len(pieces)}:v=1:a=1[v][a]",
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "libopus", "-b:a", "128k",
+        "-movflags", "+faststart", str(out),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise media.MediaError(f"concat failed: {(proc.stderr or '')[-400:]}")
 
 
 def merge_transcripts(pieces: list[Piece]) -> list[transcribe.Sentence]:
@@ -464,10 +498,18 @@ def main() -> int:
             continue
 
         out = episodes_dir(args.season) / f"{ep}.mp4"
-        concat_video(pieces, out)
-        sentences = merge_transcripts(pieces)
-        write_episode(args.season, ep, pieces, sentences)
-        actual = media.probe_duration(out)
+        try:
+            concat_video(pieces, out)
+            sentences = merge_transcripts(pieces)
+            write_episode(args.season, ep, pieces, sentences)
+            actual = media.probe_duration(out)
+        except Exception as exc:                          # noqa: BLE001
+            # One bad episode used to abort the run: episode 13 raised and took
+            # 14-20 with it, so a single fixable fault cost seven episodes.
+            print(f"  ep {ep}: FAILED — {type(exc).__name__}: {str(exc)[-200:]}")
+            out.unlink(missing_ok=True)     # never leave a half-written episode
+            skipped.append(ep)
+            continue
         drift = actual - total
         # A join that lands more than a second from the plan means the trim or the
         # concat did something other than intended, and every timestamp after it
