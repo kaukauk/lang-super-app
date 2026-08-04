@@ -67,9 +67,29 @@ def analyze_reply(
 
 
 @dataclass
+class Correction:
+    """One fix to something the learner wrote. `kind` separates outright errors from
+    understood-but-unnatural phrasing, so the UI can present the second as a nudge
+    rather than a red mark."""
+
+    original: str
+    corrected: str
+    note_en: str = ""
+    kind: str = "grammar"        # spelling | grammar | naturalness
+
+    def as_dict(self) -> dict[str, str]:
+        return {"original": self.original, "corrected": self.corrected,
+                "note_en": self.note_en, "kind": self.kind}
+
+
+CORRECTION_KINDS = ("spelling", "grammar", "naturalness")
+
+
+@dataclass
 class SparResponse:
     reply_ko: str
     glosses: dict[str, str] = field(default_factory=dict)
+    corrections: list[Correction] = field(default_factory=list)
     micro_feedback_en: str = ""
     suggested_user_reply_ko: str = ""
     suggested_user_reply_en: str = ""
@@ -90,10 +110,21 @@ SYSTEM_PROMPT = (
     "content words. Particles/function words are always fine.\n"
     "- Prefer to include one of today's TARGET items. If the flow conflicts with "
     "the vocab rules, change the topic to obey the rules.\n"
+    "- corrections: fix EVERY problem in what the learner just wrote — spelling, "
+    "spacing, particles, endings, conjugation, word order — AND anything that is "
+    "understandable but would sound off to a native speaker in normal conversation "
+    "(unnatural word choice, wrong register for 해요체, textbook-stiff phrasing). "
+    "Stay in character in reply_ko; the corrections are a separate channel. Each "
+    'entry is {"original","corrected","note_en","kind"} where original is the '
+    "learner's exact wording, corrected is the fixed Korean, note_en is one short "
+    "English clause saying why, and kind is spelling, grammar, or naturalness. "
+    "Return an empty array only when there is genuinely nothing to fix — do not "
+    "invent problems, and do not stay silent to be polite.\n"
     "Return ONLY a JSON object with keys: reply_ko (string), glosses (object: "
-    "each content word in reply_ko -> short English gloss), micro_feedback_en "
-    "(string: brief feedback on the learner's Korean, include a correction if "
-    "needed), suggested_user_reply_ko (a short non-question reply the learner "
+    "each content word in reply_ko -> short English gloss), corrections (array, "
+    "as above), micro_feedback_en "
+    "(string: one encouraging line about the learner's Korean overall — the "
+    "specifics belong in corrections), suggested_user_reply_ko (a short non-question reply the learner "
     "could say, obeying the vocab rules), suggested_user_reply_en (its English), "
     "targets_used (array of target strings you used). No markdown fences."
 )
@@ -124,6 +155,28 @@ def build_user_prompt(
     return "\n".join(lines)
 
 
+def parse_corrections(raw: Any) -> list[Correction]:
+    """Lenient by design: corrections are advisory, so a malformed entry is dropped
+    rather than failing the turn and costing the learner their reply."""
+    if not isinstance(raw, list):
+        return []
+    out: list[Correction] = []
+    for rc in raw:
+        if not isinstance(rc, dict):
+            continue
+        original = str(rc.get("original", "")).strip()
+        corrected = str(rc.get("corrected", "")).strip()
+        if not corrected or corrected == original:
+            continue                     # nothing actually changed
+        kind = str(rc.get("kind", "")).strip().lower()
+        out.append(Correction(
+            original=original, corrected=corrected,
+            note_en=str(rc.get("note_en", "")).strip(),
+            kind=kind if kind in CORRECTION_KINDS else "grammar",
+        ))
+    return out
+
+
 def parse_spar(data: dict[str, Any]) -> SparResponse:
     if not isinstance(data, dict):
         raise LLMError("sparring response is not an object")
@@ -134,6 +187,7 @@ def parse_spar(data: dict[str, Any]) -> SparResponse:
     return SparResponse(
         reply_ko=reply.strip(),
         glosses={str(k): str(v) for k, v in glosses.items()},
+        corrections=parse_corrections(data.get("corrections")),
         micro_feedback_en=str(data.get("micro_feedback_en", "")),
         suggested_user_reply_ko=str(data.get("suggested_user_reply_ko", "")),
         suggested_user_reply_en=str(data.get("suggested_user_reply_en", "")),
@@ -194,7 +248,9 @@ def spar_turn(
 
 HARVEST_SYSTEM = (
     "From the Korean conversation below, propose 3 to 5 NEW useful Korean lexical "
-    "chunks the learner reached for or would benefit from next. Return ONLY a JSON "
+    "chunks the learner reached for or would benefit from next. If corrections were "
+    "made during the session, prefer chunks built on the CORRECTED forms — those are "
+    "the gaps the learner demonstrably has. Return ONLY a JSON "
     'object {"chunks":[{"type","ko","en","gloss"}]} with type in '
     "sentence|noun_verb|grammar. A grammar chunk must be a real phrase with the "
     "ending on an actual verb (\"가려면\"), never a bare ending (\"-려면\"). "
@@ -205,12 +261,21 @@ HARVEST_SYSTEM = (
 def harvest_chunks(
     *, history: list[dict[str, str]], provider: LLMProvider,
     known: Optional[set[str]] = None, model: Optional[str] = None,
-    max_n: int = 5,
+    max_n: int = 5, corrections: Optional[list[dict[str, str]]] = None,
 ) -> list[Chunk]:
+    """Turn a finished session into chunks for tomorrow. Corrections from the session
+    are passed in: a form the learner actually got wrong is better evidence of a gap
+    than anything inferable from the transcript alone."""
     known = known or set()
     model = model or config.SPARRING_MODEL
     convo = "\n".join(f"{t.get('role', '?')}: {t.get('text', '')}" for t in history)
     user = f"KNOWN (avoid): {{{', '.join(sorted(known)[:400])}}}\n\nConversation:\n{convo}"
+    if corrections:
+        fixed = "\n".join(
+            f"- {c.get('original', '')} -> {c.get('corrected', '')}"
+            + (f" ({c.get('note_en')})" if c.get("note_en") else "")
+            for c in corrections)
+        user += f"\n\nCorrections made this session (the learner's actual gaps):\n{fixed}"
     data = provider.complete_json(system=HARVEST_SYSTEM, user=user, model=model, max_tokens=800)
     raw = data.get("chunks") if isinstance(data, dict) else None
     out: list[Chunk] = []
@@ -356,3 +421,22 @@ def session_history(session_id: int) -> list[dict[str, str]]:
             select(SparTurn).where(SparTurn.session_id == session_id).order_by(SparTurn.id)
         ).all()
     return [{"role": t.role, "text": t.text_ko} for t in turns]
+
+
+def session_corrections(session_id: int) -> list[dict[str, str]]:
+    """Every correction made across the session, in order — the end-of-session view
+    of what the learner kept getting wrong, and the input to the harvest."""
+    with db.session_scope() as s:
+        turns = s.exec(
+            select(SparTurn).where(SparTurn.session_id == session_id).order_by(SparTurn.id)
+        ).all()
+    out: list[dict[str, str]] = []
+    for t in turns:
+        try:
+            fb = json.loads(t.feedback_json or "{}")
+        except ValueError:
+            continue
+        got = fb.get("corrections")
+        if isinstance(got, list):
+            out.extend(c for c in got if isinstance(c, dict))
+    return out

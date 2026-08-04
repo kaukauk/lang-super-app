@@ -331,8 +331,11 @@ def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
                               wind_down=body.wind_down,
                               model=_model(body.model, config.SPARRING_MODEL))
     sparring.record_turn(session_id, "assistant", text_ko=resp.reply_ko,
-                         glosses=resp.glosses, targets_used=resp.targets_used)
+                         glosses=resp.glosses, targets_used=resp.targets_used,
+                         feedback={"micro_feedback_en": resp.micro_feedback_en,
+                                   "corrections": [c.as_dict() for c in resp.corrections]})
     return {"reply_ko": resp.reply_ko, "micro_feedback_en": resp.micro_feedback_en,
+            "corrections": [c.as_dict() for c in resp.corrections],
             "suggested_user_reply_ko": resp.suggested_user_reply_ko,
             "suggested_user_reply_en": resp.suggested_user_reply_en,
             "targets_used": resp.targets_used, "unexpected": resp.unexpected,
@@ -343,8 +346,11 @@ def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
 def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     history = sparring.session_history(session_id)
     known = srs.known_surface_forms(deck_name=body.deck)
-    chunks = sparring.harvest_chunks(history=history, provider=provider(), known=known)
-    out: dict[str, Any] = {"chunks": [c.as_dict() for c in chunks]}
+    corrections = sparring.session_corrections(session_id)
+    chunks = sparring.harvest_chunks(history=history, provider=provider(), known=known,
+                                     corrections=corrections)
+    out: dict[str, Any] = {"chunks": [c.as_dict() for c in chunks],
+                           "corrections": corrections}
     if body.accept:
         cards = extraction.accept_chunks(chunks, today_ord=body.today, deck_name=body.deck)
         out["accepted_card_ids"] = [c.id for c in cards]

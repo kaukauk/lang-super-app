@@ -128,6 +128,24 @@ export default function Spar() {
                   </div>
                 )}
               </div>
+              {m.meta.corrections?.length > 0 && (
+                <div className="space-y-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 dark:border-rose-900 dark:bg-rose-950/30">
+                  {m.meta.corrections.map((c, ci) => (
+                    <div key={ci} className="text-sm">
+                      <span className="text-rose-400 line-through decoration-rose-300">{c.original}</span>
+                      <span className="mx-1.5 text-rose-400">→</span>
+                      <span className="font-medium text-rose-800 dark:text-rose-200">{c.corrected}</span>
+                      {c.note_en && <span className="ml-2 text-xs text-rose-600 dark:text-rose-400">{c.note_en}</span>}
+                      {/* naturalness isn't an error — say so, or it reads as one */}
+                      {c.kind === "naturalness" && (
+                        <span className="ml-1.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-500 dark:bg-rose-900/50">
+                          sounds off
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               {m.meta.micro_feedback_en && (
                 <div className="rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
                   💡 {m.meta.micro_feedback_en}

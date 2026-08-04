@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.llm import FakeLLM
+from app.llm.fake import DemoLLM
 from app.services import sparring as sp
 
 
@@ -154,3 +155,49 @@ def test_spar_open_falls_back_to_real_lines_when_llm_blank() -> None:
     # no segment -> no closing lines -> anchor stays empty but role still set
     opening = sp.spar_open(sess.id, provider=llm, segment_id=None)
     assert opening.role_en == "the customer"
+
+
+def test_corrections_parsed_and_no_ops_dropped() -> None:
+    """A "correction" identical to the original is noise on the card — the model emits
+    them when it feels obliged to fill the array."""
+    out = sp.parse_corrections([
+        {"original": "밥 먹어요", "corrected": "밥을 먹어요",
+         "note_en": "needs 을", "kind": "grammar"},
+        {"original": "좋아요", "corrected": "좋아요", "note_en": "fine"},   # no-op
+        {"original": "가요", "corrected": "갔어요", "kind": "nonsense"},     # bad kind
+        {"original": "x", "corrected": ""},                                  # empty
+        "not an object",
+    ])
+    assert [c.corrected for c in out] == ["밥을 먹어요", "갔어요"]
+    assert out[0].kind == "grammar"
+    assert out[1].kind == "grammar"          # unknown kind falls back, not dropped
+
+
+def test_corrections_survive_a_malformed_array() -> None:
+    # advisory: never fail the turn (and lose the learner's reply) over feedback
+    assert sp.parse_corrections(None) == []
+    assert sp.parse_corrections("oops") == []
+
+
+def test_spar_turn_returns_corrections() -> None:
+    resp = sp.spar_turn(user_text="밥 먹어요", provider=DemoLLM(),
+                              targets=["가요"], support=[])
+    assert any(c.corrected == "밥을 먹어요" for c in resp.corrections)
+    assert all(c.original != c.corrected for c in resp.corrections)
+
+
+def test_harvest_prompt_carries_the_corrections() -> None:
+    """Corrections are the learner's demonstrated gaps, so they should steer what
+    becomes a card — not just be shown once and forgotten."""
+    seen: dict[str, str] = {}
+
+    class Spy(DemoLLM):
+        def complete_json(self, *, system, user, **kw):
+            seen["user"] = user
+            return super().complete_json(system=system, user=user, **kw)
+
+    sp.harvest_chunks(
+        history=[{"role": "user", "text": "밥 먹어요"}], provider=Spy(),
+        corrections=[{"original": "밥 먹어요", "corrected": "밥을 먹어요",
+                      "note_en": "needs 을"}])
+    assert "밥을 먹어요" in seen["user"] and "needs 을" in seen["user"]

@@ -20,8 +20,13 @@ export type Card = {
   id: number; kind: string; front_ko: string; back_en: string; gloss: string; state: string;
 };
 export type Stats = { total: number; new: number; due: number };
+export type Correction = {
+  original: string; corrected: string; note_en: string;
+  kind: "spelling" | "grammar" | "naturalness";
+};
 export type SparReply = {
-  reply_ko: string; micro_feedback_en: string; suggested_user_reply_ko: string;
+  reply_ko: string; micro_feedback_en: string; corrections: Correction[];
+  suggested_user_reply_ko: string;
   suggested_user_reply_en: string; targets_used: string[]; unexpected: string[];
   warnings: string[]; glosses: Record<string, string>;
 };
@@ -88,7 +93,8 @@ export const api = {
   sparTurn: (sid: number, body: { text: string; scene?: string; wind_down?: boolean }) =>
     req<SparReply>(`/spar/${sid}/turn`, post(body)),
   sparHarvest: (sid: number, accept = true) =>
-    req<{ chunks: Chunk[]; accepted_card_ids?: number[] }>(`/spar/${sid}/harvest`, post({ accept })),
+    req<{ chunks: Chunk[]; corrections: Correction[]; accepted_card_ids?: number[] }>(
+      `/spar/${sid}/harvest`, post({ accept })),
 
   // --- AV pipeline (audio/video cards + in-app primer) ---
   buildAv: (sid: number, body: { push?: boolean; make_media?: boolean; replace?: boolean; url?: string; section?: string } = {}) =>
