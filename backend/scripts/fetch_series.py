@@ -285,7 +285,7 @@ def caption_words(part: Part) -> list[transcribe.Word]:
         GATE.wait()
         cmd = [*media._ytdlp_argv(), "--skip-download", "--write-auto-subs",
                "--sub-langs", "ko", "--sub-format", "json3", "--no-progress",
-               *media._js_runtime_args(),
+               *media._js_runtime_args(), *media.cookie_args(),
                "-o", str(d / "captions.%(ext)s"),
                f"https://www.youtube.com/watch?v={part.youtube_id}"]
         out = subprocess.run(cmd, capture_output=True, text=True)
@@ -578,12 +578,22 @@ def main() -> int:
                          "what draws YouTube's throttling; raise it at your peril")
     ap.add_argument("--refresh", action="store_true",
                     help="re-list the playlists instead of using the saved manifest")
+    ap.add_argument("--cookies-from-browser", default=None, metavar="BROWSER",
+                    help="lift a YouTube session from this browser (e.g. 'chrome', "
+                         "'firefox:/path/to/profile'). A bulk run trips YouTube's "
+                         "bot detection and then everything needs sign-in; this is "
+                         "what gets past it. Authenticates every request as you.")
     ap.add_argument("--whisper", action="store_true",
                     help="transcribe with Whisper instead of YouTube's auto-captions: "
                          "~20x slower, but punctuated and generally more accurate")
     ap.add_argument("--fake", action="store_true",
                     help="canned transcripts, for exercising the plumbing offline")
     args = ap.parse_args()
+    if args.cookies_from_browser:
+        # Set on config rather than threaded through every call site, so the shared
+        # downloader in services/media picks it up too and there stays one place
+        # that knows how to talk to yt-dlp.
+        config.YTDLP_COOKIES_FROM_BROWSER = args.cookies_from_browser
 
     totals = {"done": 0, "failed": 0}
     for season in args.season:

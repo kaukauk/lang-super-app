@@ -67,6 +67,16 @@ def _js_runtime_args() -> list[str]:
     return []
 
 
+def cookie_args() -> list[str]:
+    """`--cookies-from-browser` when one is configured, otherwise nothing.
+
+    A bulk run trips YouTube's bot detection and it starts demanding sign-in for
+    everything, video and captions alike; a browser session is what gets past that.
+    Off unless asked for, since it authenticates every request as the user."""
+    spec = config.YTDLP_COOKIES_FROM_BROWSER
+    return ["--cookies-from-browser", spec] if spec else []
+
+
 def build_ytdlp_cmd(
     url_or_id: str, out_template: str, *, section: Optional[str] = None,
 ) -> list[str]:
@@ -88,6 +98,7 @@ def build_ytdlp_cmd(
         cmd += ["--remote-components", config.YTDLP_REMOTE_COMPONENTS]
     if config.YTDLP_SLEEP_REQUESTS > 0:
         cmd += ["--sleep-requests", str(config.YTDLP_SLEEP_REQUESTS)]
+    cmd += cookie_args()
     if section:
         cmd += ["--download-sections", section, "--force-keyframes-at-cuts"]
     cmd += [url_or_id]

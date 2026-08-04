@@ -84,6 +84,13 @@ YTDLP_REMOTE_COMPONENTS = os.environ.get("LANGAPP_YTDLP_REMOTE_COMPONENTS", "ejs
 # second between requests is invisible for a single fetch and is what lets a long
 # run finish at all. 0 disables.
 YTDLP_SLEEP_REQUESTS = float(os.environ.get("LANGAPP_YTDLP_SLEEP_REQUESTS", "1"))
+# Browser to lift a YouTube session from, e.g. "firefox" or
+# "firefox:/path/to/profile" — see yt-dlp's --cookies-from-browser. Needed once
+# YouTube decides the IP is a bot and starts demanding sign-in, which a bulk run
+# reliably triggers. Empty by default: this authenticates every request as you, so
+# it should be a deliberate choice rather than something the app does by default.
+# Only ever a browser/profile spec — no cookie material is stored here.
+YTDLP_COOKIES_FROM_BROWSER = os.environ.get("LANGAPP_YTDLP_COOKIES_BROWSER", "")
 
 # --- Whisper (faster-whisper, STT) --------------------------------------
 # large-v3 (not turbo) — turbo trades timestamp accuracy, which matters for cutting
