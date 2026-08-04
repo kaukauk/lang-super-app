@@ -195,6 +195,30 @@ def primer_audio(segment_id: int, idx: int):
     return FileResponse(match["audio_path"], media_type="audio/mpeg")
 
 
+class SeenBody(BaseModel):
+    seen: Optional[bool] = None
+
+
+@app.post("/api/segments/{segment_id}/primer/{idx}/seen")
+def primer_seen(segment_id: int, idx: int, body: SeenBody) -> dict[str, Any]:
+    """Between-passes check: did the learner catch this line on the blind watch?"""
+    try:
+        return avcards.mark_seen(segment_id, idx, body.seen)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get("/api/segments/{segment_id}/primer-clip/{idx}")
+def primer_clip(segment_id: int, idx: int):
+    """The target's scene clip — the same file the Anki card embeds."""
+    path = avcards.clip_path_for(segment_id, idx)
+    if path is None:
+        raise HTTPException(404, "clip not built for this target")
+    # VP9/Opus for Anki's sake; browsers play it too, so one file serves both
+    suffix = path.suffix.lstrip(".") or "mp4"
+    return FileResponse(str(path), media_type=f"video/{'webm' if suffix == 'webm' else 'mp4'}")
+
+
 @app.get("/api/segments/{segment_id}/clip")
 def segment_clip(segment_id: int):
     seg = ingest.get_segment(segment_id)

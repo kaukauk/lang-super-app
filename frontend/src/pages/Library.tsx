@@ -115,8 +115,13 @@ export default function Library() {
                     <Link to={`/primer/${s.id}`} className="rounded-md border border-indigo-300 px-2.5 py-1 text-sm font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300">1 · Prime</Link>
                   )}
                   <Link to={`/watch/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">2 · Watch</Link>
+                  {/* the check sits between the blind and study passes, so it comes
+                      after Watch in the strip even though Watch serves both */}
                   {!s.is_full_review && (
-                    <Link to={`/spar/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">3 · Spar</Link>
+                    <Link to={`/check/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">3 · Check</Link>
+                  )}
+                  {!s.is_full_review && (
+                    <Link to={`/spar/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm dark:border-neutral-700">4 · Spar</Link>
                   )}
                   {!s.is_full_review && (
                     <Link to={`/extract/${s.id}`} className="rounded-md border px-2.5 py-1 text-sm text-neutral-500 dark:border-neutral-700">Chunks</Link>

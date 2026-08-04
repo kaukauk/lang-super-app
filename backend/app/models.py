@@ -94,6 +94,10 @@ class AvCard(SQLModel, table=True):
     clip_file: str = ""             # back video-clip filename
     primer_audio_file: str = ""     # in-app primer's clean edge-tts audio (NOT in Anki)
     anki_note_id: Optional[int] = None
+    # Primer check, run between the blind watch and the study watch: did the learner
+    # catch this line? None = not checked yet, so "unseen" and "not yet asked" stay
+    # distinct and a half-finished check can be resumed rather than restarted.
+    seen: Optional[bool] = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 

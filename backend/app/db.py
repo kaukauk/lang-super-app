@@ -35,6 +35,7 @@ def init_db() -> None:
 # on a fresh DB). Keep this list tiny — full migrations are out of scope.
 _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "sparsession": [("role_en", "TEXT DEFAULT ''"), ("scene_en", "TEXT DEFAULT ''")],
+    "avcard": [("seen", "INTEGER DEFAULT NULL")],
 }
 
 

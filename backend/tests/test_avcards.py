@@ -147,3 +147,34 @@ def test_build_av_push_via_fake_transport(cache_tmp, monkeypatch) -> None:
     assert res.pushed == 5
     assert all(t.anki_note_id for t in res.targets)
     assert all(t.audio_file.endswith("front.mp3") for t in res.targets)
+
+
+@pytest.fixture
+def seeded_segment(cache_tmp) -> int:
+    seg_id = _make_segment()
+    avcards.build_av_cards(seg_id, llm=DemoLLM(), transcriber=FakeTranscriber(_sentences()),
+                           tts_provider=tts.FakeTTS(), make_media=False, push=False)
+    return seg_id
+
+
+def test_primer_check_marks_and_clears(seeded_segment) -> None:
+    """None vs False matters: "not asked yet" and "missed it" are different states,
+    so a half-finished check resumes instead of restarting."""
+    sid = seeded_segment
+    rows = avcards.primer_for_segment(sid)
+    assert rows and all(r["seen"] is None for r in rows)
+
+    avcards.mark_seen(sid, 0, False)
+    avcards.mark_seen(sid, 1, True)
+    by_idx = {r["target_idx"]: r for r in avcards.primer_for_segment(sid)}
+    assert by_idx[0]["seen"] is False and by_idx[1]["seen"] is True
+    assert by_idx[2]["seen"] is None
+
+    # a mis-tap is undoable without rebuilding the segment
+    avcards.mark_seen(sid, 0, None)
+    assert avcards.primer_for_segment(sid)[0]["seen"] is None
+
+
+def test_mark_seen_rejects_unknown_target(seeded_segment) -> None:
+    with pytest.raises(ValueError):
+        avcards.mark_seen(seeded_segment, 99, True)

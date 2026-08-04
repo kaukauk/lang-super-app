@@ -355,10 +355,47 @@ def _persist(segment_id: int, result: AvBuildResult, *, replace: bool) -> None:
 
 def primer_for_segment(segment_id: int) -> list[dict]:
     """The in-app Hit-List: target Korean + clean TTS audio + in-context hint.
-    Reads the AvCard rows produced by build_av_cards. Never includes the video."""
+    Reads the AvCard rows produced by build_av_cards.
+
+    `seen` and `has_clip` drive the between-passes check. The clip PATH stays out of
+    the payload — it is served through its own endpoint, so a primer response can be
+    rendered without exposing local filesystem layout."""
     cards = _existing_cards(segment_id)
     return [{
         "target_idx": c.target_idx, "target_ko": c.target_ko,
         "hint_en": c.explanation_en,
         "audio_path": c.primer_audio_file,
+        "context_ko": c.context_ko,
+        "seen": c.seen,
+        "has_clip": bool(c.clip_file),
     } for c in cards]
+
+
+def mark_seen(segment_id: int, target_idx: int, seen: Optional[bool]) -> dict:
+    """Record whether the learner caught this line on the blind watch. `seen=None`
+    clears it, so a mis-tap can be undone without rebuilding the segment."""
+    with db.session_scope() as s:
+        card = s.exec(
+            select(AvCard).where(AvCard.segment_id == segment_id,
+                                 AvCard.target_idx == target_idx)).first()
+        if card is None:
+            raise ValueError(f"no target {target_idx} in segment {segment_id}")
+        card.seen = seen
+        s.add(card)
+        return {"target_idx": target_idx, "seen": seen}
+
+
+def clip_path_for(segment_id: int, target_idx: int) -> Optional[Path]:
+    """Absolute path of a target's video clip, or None if it was never built.
+
+    Same file the Anki card embeds — the check page shows the scene exactly as the
+    card will, so recognising it here is the same act as recognising it in review."""
+    card = next((c for c in _existing_cards(segment_id) if c.target_idx == target_idx), None)
+    if card is None or not card.clip_file:
+        return None
+    seg: Optional[Segment] = ingest.get_segment(segment_id)
+    video: Optional[Video] = ingest.get_video(seg.video_id) if seg else None
+    if video is None:
+        return None
+    path = media.segment_dir(video.youtube_id, segment_id) / card.clip_file
+    return path if path.exists() else None

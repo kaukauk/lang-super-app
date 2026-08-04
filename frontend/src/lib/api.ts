@@ -43,7 +43,10 @@ export type AvBuild = {
   segment_id: number; youtube_id: string; snippet_path: string; pushed: number;
   warnings: string[]; targets: AvTarget[];
 };
-export type PrimerItem = { target_idx: number; target_ko: string; hint_en: string; audio_path: string };
+export type PrimerItem = {
+  target_idx: number; target_ko: string; hint_en: string; audio_path: string;
+  context_ko: string; seen: boolean | null; has_clip: boolean;
+};
 
 function qs(params?: Record<string, string | number | undefined>): string {
   if (!params) return "";
@@ -101,6 +104,10 @@ export const api = {
     req<AvBuild>(`/segments/${sid}/build-av-cards`, post(body)),
   primer: (sid: number) => req<PrimerItem[]>(`/segments/${sid}/primer`),
   primerAudioUrl: (sid: number, idx: number) => `/api/segments/${sid}/primer-audio/${idx}`,
+  primerClipUrl: (sid: number, idx: number) => `/api/segments/${sid}/primer-clip/${idx}`,
+  markSeen: (sid: number, idx: number, seen: boolean | null) =>
+    req<{ target_idx: number; seen: boolean | null }>(
+      `/segments/${sid}/primer/${idx}/seen`, post({ seen })),
   clipUrl: (sid: number) => `/api/segments/${sid}/clip`,
   ankiCheck: () => req<{ ok: boolean; url: string; version: number; decks: string[] }>("/anki/check"),
 };

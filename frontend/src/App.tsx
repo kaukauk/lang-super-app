@@ -5,6 +5,7 @@ import Watch from "./pages/Watch";
 import Spar from "./pages/Spar";
 import Extract from "./pages/Extract";
 import Primer from "./pages/Primer";
+import Check from "./pages/Check";
 
 function Tab({ to, label }: { to: string; label: string }) {
   return (
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/warmup" element={<WarmUp />} />
           <Route path="/extract/:sid" element={<Extract />} />
           <Route path="/primer/:sid" element={<Primer />} />
+          <Route path="/check/:sid" element={<Check />} />
           <Route path="/watch/:sid" element={<Watch />} />
           <Route path="/spar/:sid" element={<Spar />} />
         </Routes>
