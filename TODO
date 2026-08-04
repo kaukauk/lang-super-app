@@ -1,8 +1,20 @@
+fixes:
 english primer of the scene in some detail
-video not embedded in scene
+primer length WAY too long: 네 구해주셔서 감사해요 어이 저 스피드 샤인 미안해 나 때문에 너희까지 위험해지고 괜찮아 우린 친구잖아 친구가 위험에 처했을 땐 당연히 도와줘야지 그래도 다음번엔 위험한 곳에 함부로 들어가면 안 돼 항상 주의도 잘 살피고 네, 우리도 갇힌 것 같은데 뭐 레스큐팀 도와주세요 사건 발생 사건 발생 슈퍼 우쿨레키 출동받은다 응 룰레스큐팀 출동 꼬마 차들이 숨바꼭질하다 구덩이에 빠졌어 서둘러 출동해줘 알겠어 조금한, 오늘도 작전 성공 가디언 엑스와 무시무시한 좀비 자동차 대소동 안녕하세요 안녕하세요 오늘 잘 부탁해요 네 음 저 기름이 모자랄 것 같은데 주유 좀 부탁드려요 네 이쪽으로 오세요, 기다려 금방 구해줄게 네 노기 움직이면 위험해 눈 꼭 감고 조금만 기다리렴 아. 5 examples, four of these were on the same day
+    sparring: should correct all spelling and grammar errors, and things that would sound off in a regular conversation, not sure if this should be done in line, or after we are finished sparring? and then maybe we can add the corrections to the chunks or harvested things?
+remove standalone grammar cards from the harvesteed cards:: -려면;if (you) want to;if want to
+
+
+new changes:
+maybe a little check as to which primers we saw after the first pass and we can look at the others in context and with the relavant video clip in context before the second pass?
 
 settings:
 subtitle stacking
 when next day starts
 auto adding of the harvested chunks to anki deck?
 is it fixed 5 min length for the clips? or is it looking to section it to 10 clips?
+
+
+anki:
+    video not embedded in scene
+    video should autoplay upon flipping card
