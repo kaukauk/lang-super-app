@@ -469,7 +469,8 @@ def is_done(part: Part) -> bool:
 
 # --- driver --------------------------------------------------------------
 
-def prefetch(parts: list[Part], workers: int) -> Iterator[Part]:
+def prefetch(parts: list[Part], workers: int,
+             failures: Optional[list[str]] = None) -> Iterator[Part]:
     """Yield parts in order, downloading ahead of the consumer.
 
     Transcription is the bottleneck and holds the GPU, so downloads run on their
@@ -514,7 +515,14 @@ def prefetch(parts: list[Part], workers: int) -> Iterator[Part]:
                     break
                 q.get()
             if isinstance(outcome, Exception):
-                print(f"  [fail] {part.name} download: {outcome}")
+                # Record it, don't just print it: a download that never happened is
+                # a missing part, and a summary reading "0 failed" beside three
+                # absent videos is worse than no summary at all.
+                gone = "gone from YouTube" in str(outcome)
+                print(f"  [{'gone' if gone else 'fail'}] {part.name} download: "
+                      f"{str(outcome)[-160:]}")
+                if failures is not None:
+                    failures.append(part.name)
                 continue
             yield part
     finally:
@@ -554,7 +562,8 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
     stats = {"done": len(parts) - len(pending), "failed": 0}
     gone: list[str] = []
     started = time.monotonic()
-    for i, part in enumerate(prefetch(pending, workers), 1):
+    dl_failed: list[str] = []
+    for i, part in enumerate(prefetch(pending, workers, dl_failed), 1):
         link_video(part)
         if download_only:
             print(f"  [{i}/{len(pending)}] {part.name} downloaded")
@@ -593,11 +602,12 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
         left = int(rate * (len(pending) - i))
         print(f"  [{i}/{len(pending)}] {part.name}  {len(sentences)} sentences"
               f"  (~{left // 60}m{left % 60:02d}s left)", flush=True)
-    if gone:
-        # Worth stating plainly: re-running will never fill these, so they are a
-        # permanent gap in the season rather than something to try again tonight.
-        print(f"  {len(gone)} part(s) taken down at source, unrecoverable: "
-              f"{', '.join(gone)}")
+    stats["failed"] += len(dl_failed)
+    if gone or dl_failed:
+        names = sorted(set(gone) | set(dl_failed))
+        # State it plainly: re-running will not fill the blocked ones, so they are
+        # a gap in the season rather than something to try again tonight.
+        print(f"  {len(names)} part(s) missing: {', '.join(names)}")
     return stats
 
 
