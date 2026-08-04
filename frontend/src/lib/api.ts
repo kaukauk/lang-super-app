@@ -30,6 +30,7 @@ export type SparReply = {
   suggested_user_reply_en: string; targets_used: string[]; unexpected: string[];
   warnings: string[]; glosses: Record<string, string>;
 };
+export type Lookup = { word: string; gloss_en: string; ending: string; lemma: string };
 export type SparOpening = {
   anchor_ko: string; role_en: string; prompt_en: string; scene_en: string;
   glosses: Record<string, string>;
@@ -95,9 +96,13 @@ export const api = {
     req<SparOpening>(`/spar/${sid}/open`, post({ segment_id })),
   sparTurn: (sid: number, body: { text: string; scene?: string; wind_down?: boolean }) =>
     req<SparReply>(`/spar/${sid}/turn`, post(body)),
+  sparLookup: (sid: number, word: string, context_ko: string,
+               known_glosses: Record<string, string> = {}) =>
+    req<Lookup>(`/spar/${sid}/lookup`, post({ word, context_ko, known_glosses })),
   sparHarvest: (sid: number, accept = true) =>
-    req<{ chunks: Chunk[]; corrections: Correction[]; accepted_card_ids?: number[] }>(
-      `/spar/${sid}/harvest`, post({ accept })),
+    req<{ chunks: Chunk[]; corrections: Correction[]; lookups: Lookup[];
+          accepted_card_ids?: number[]; anki?: { pushed: number; error?: string } }>(
+      `/spar/${sid}/harvest`, post({ accept, push_anki: true })),
 
   // --- AV pipeline (audio/video cards + in-app primer) ---
   buildAv: (sid: number, body: { push?: boolean; make_media?: boolean; replace?: boolean; url?: string; section?: string } = {}) =>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type SparOpening, type SparReply } from "../lib/api";
+import ClickableKorean from "../components/ClickableKorean";
 
 type Msg =
   | { role: "user"; text: string }
@@ -16,6 +17,7 @@ export default function Spar() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pushed, setPushed] = useState<number | null>(null);
   const [harvested, setHarvested] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
@@ -64,7 +66,9 @@ export default function Spar() {
   const harvest = async () => {
     if (!session) return;
     const r = await api.sparHarvest(session, true);
-    setHarvested(r.chunks.length);
+    // words you looked up become cards too, so count them in what you report back
+    setHarvested(r.chunks.length + (r.lookups?.length ?? 0));
+    setPushed(r.anki?.error ? -1 : (r.anki?.pushed ?? 0));
   };
 
   return (
@@ -88,6 +92,8 @@ export default function Spar() {
       {harvested !== null && (
         <p className="mb-2 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-700 dark:bg-emerald-950/40">
           Harvested {harvested} new chunk{harvested === 1 ? "" : "s"} for tomorrow's warm-up.
+          {pushed !== null && pushed >= 0 && ` ${pushed} pushed to Korean::Chunks.`}
+          {pushed === -1 && " Anki wasn't reachable — the chunks are saved, push again later."}
         </p>
       )}
 
@@ -117,15 +123,11 @@ export default function Spar() {
           ) : (
             <div key={idx} className="max-w-[85%] space-y-2">
               <div className="rounded-2xl rounded-bl-sm bg-neutral-100 px-4 py-2 dark:bg-neutral-800">
-                <div className="text-lg">{m.text}</div>
-                {Object.keys(m.meta.glosses || {}).length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {Object.entries(m.meta.glosses).map(([w, g]) => (
-                      <span key={w} className="rounded bg-white px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300">
-                        <b>{w}</b> {g}
-                      </span>
-                    ))}
-                  </div>
+                {/* click any word you don't know — it glosses inline and joins the harvest */}
+                {session ? (
+                  <ClickableKorean sessionId={session} text={m.text} glosses={m.meta.glosses} />
+                ) : (
+                  <div className="text-lg">{m.text}</div>
                 )}
               </div>
               {m.meta.corrections?.length > 0 && (
