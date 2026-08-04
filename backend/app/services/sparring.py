@@ -20,7 +20,7 @@ from .. import config, db
 from ..llm.client import LLMError, LLMProvider
 from ..models import SparSession, SparTurn
 from . import analyzer, ingest, transcribe
-from .extraction import Chunk, dedupe_chunks
+from .extraction import Chunk, dedupe_chunks, drop_citation_grammar
 
 # n+1: a reply may introduce AT MOST this many unknown content words (the learning
 # stretch — ideally the day's target). More than this triggers a rewrite.
@@ -196,7 +196,9 @@ HARVEST_SYSTEM = (
     "From the Korean conversation below, propose 3 to 5 NEW useful Korean lexical "
     "chunks the learner reached for or would benefit from next. Return ONLY a JSON "
     'object {"chunks":[{"type","ko","en","gloss"}]} with type in '
-    "sentence|noun_verb|grammar. Avoid items in the KNOWN list. No markdown fences."
+    "sentence|noun_verb|grammar. A grammar chunk must be a real phrase with the "
+    "ending on an actual verb (\"가려면\"), never a bare ending (\"-려면\"). "
+    "Avoid items in the KNOWN list. No markdown fences."
 )
 
 
@@ -221,7 +223,7 @@ def harvest_chunks(
                 out.append(Chunk(type=t, ko=ko.strip(),
                                  en=str(rc.get("en", "")).strip(),
                                  gloss=str(rc.get("gloss", "")).strip()))
-    return dedupe_chunks(out, known)[:max_n]
+    return dedupe_chunks(drop_citation_grammar(out), known)[:max_n]
 
 
 # --- opener: the Anchor + Prompt states ---------------------------------

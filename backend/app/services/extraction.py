@@ -59,7 +59,11 @@ SYSTEM_PROMPT = (
     f"    * {PER_TYPE} with type \"sentence\": SHORT, simple, high-frequency sentences "
     "(aim for ~3-6 words; avoid long or complex sentences) useful in daily conversation.\n"
     f"    * {PER_TYPE} with type \"noun_verb\": a common noun attached to its natural verb (a collocation).\n"
-    f"    * {PER_TYPE} with type \"grammar\": a verb phrase highlighting ONE specific grammatical ending or particle used in the segment.\n"
+    f"    * {PER_TYPE} with type \"grammar\": a verb phrase highlighting ONE specific grammatical ending or particle used in the segment. "
+    "The ending must appear INSIDE a real phrase from the dialogue with a real verb "
+    "attached (e.g. \"가려면\", NOT \"-려면\"). NEVER return a bare ending or a "
+    "citation form — no leading dash or tilde, no slashes, no parentheses, no "
+    "standalone jamo. Name the ending in the gloss instead.\n"
     'Each chunk object has keys {"type","ko","en","gloss"}: ko = Korean exactly as '
     "used, en = natural English, gloss = a brief note (for grammar, name the "
     "ending/particle).\n"
@@ -118,6 +122,37 @@ def parse_result(data: dict[str, Any]) -> ExtractionResult:
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", "", s).strip().lower()
+
+
+# Dictionary-notation marks that never occur in speech: a leading dash/tilde, the
+# slash of "-아/어서", the parens of "-(으)ㄴ", and bare jamo (ㄴ, ㄹ, ㅁ).
+_CITATION_MARKS = re.compile(r"^\s*[-~–—]|[/()（）]")
+_JAMO = re.compile(r"[ㄱ-ㆎ]")
+
+
+def is_usable_grammar(ko: str) -> bool:
+    """True if a grammar chunk is a real phrase rather than a bare ending.
+
+    A card reading "-려면 / if (you) want to" teaches a slot with nothing in it —
+    unreviewable and unpronounceable. A usable one carries the ending on an actual
+    verb ("가려면"), which is what having a content lemma tests for."""
+    if _CITATION_MARKS.search(ko) or _JAMO.search(ko):
+        return False
+    return bool(analyzer.content_lemmas(ko))
+
+
+def drop_citation_grammar(
+    chunks: list[Chunk], warnings: Optional[list[str]] = None,
+) -> list[Chunk]:
+    """Filter grammar chunks down to usable ones. The caller's top-up pass refills
+    the gap, so a rejection costs a slot rather than the card."""
+    kept, dropped = [], []
+    for c in chunks:
+        (kept if (c.type != "grammar" or is_usable_grammar(c.ko)) else dropped).append(c)
+    if dropped and warnings is not None:
+        warnings.append("dropped bare-ending grammar chunks: "
+                        + ", ".join(c.ko for c in dropped))
+    return kept
 
 
 def dedupe_chunks(chunks: list[Chunk], known: set[str]) -> list[Chunk]:
@@ -193,8 +228,9 @@ def extract_text(
         )
 
     assert result is not None
-    # dedupe against known deck, then top up any thinned categories
-    result.chunks = dedupe_chunks(result.chunks, known)
+    # drop bare endings, dedupe against known deck, then top up any thinned categories
+    result.chunks = dedupe_chunks(
+        drop_citation_grammar(result.chunks, result.warnings), known)
     for _ in range(max_topups):
         short = _short_types(result.chunks)
         if not short:
@@ -206,6 +242,9 @@ def extract_text(
             + ". Avoid all previously known items AND these already-chosen: {"
             + ", ".join(c.ko for c in result.chunks) + "}."
         )
+        if "grammar" in short:
+            topup_extra += (" For grammar, the ending must sit on a real verb from the "
+                            "dialogue — a bare ending like \"-려면\" will be rejected.")
         data = provider.complete_json(
             system=SYSTEM_PROMPT,
             user=build_user_prompt(transcript, list(known | selected), extra=topup_extra),
@@ -215,7 +254,7 @@ def extract_text(
             more = parse_result(data).chunks
         except LLMError:
             break
-        more = dedupe_chunks(more, known | selected)
+        more = dedupe_chunks(drop_citation_grammar(more), known | selected)
         for t, need in short.items():
             for c in [c for c in more if c.type == t][:need]:
                 result.chunks.append(c)

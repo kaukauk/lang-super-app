@@ -97,3 +97,26 @@ def test_extract_segment_and_accept_creates_due_cards() -> None:
     assert all(c.due_ord == 5001 for c in cards)
     assert len(srs.due_cards(today_ord=5000)) == 0
     assert len(srs.due_cards(today_ord=5001)) == 15
+
+
+def test_bare_ending_grammar_chunks_are_rejected() -> None:
+    """'-려면;if (you) want to' is a slot with nothing in it — unreviewable as a card."""
+    assert not ex.is_usable_grammar("-려면")
+    assert not ex.is_usable_grammar("~고 싶다")       # citation tilde
+    assert not ex.is_usable_grammar("-(으)ㄴ 데다가")  # parens + bare jamo
+    assert not ex.is_usable_grammar("-아/어서")        # slash alternation
+    assert ex.is_usable_grammar("가려면")             # ending on a real verb
+    assert ex.is_usable_grammar("도와줘야지")
+
+
+def test_drop_citation_grammar_spares_other_types() -> None:
+    chunks = [
+        ex.Chunk(type="grammar", ko="-려면", en="if you want to"),
+        ex.Chunk(type="grammar", ko="가려면", en="if you want to go"),
+        # only grammar is filtered; a sentence is free to look however it looks
+        ex.Chunk(type="sentence", ko="-려면", en="odd but not ours to judge"),
+    ]
+    warnings: list[str] = []
+    kept = ex.drop_citation_grammar(chunks, warnings)
+    assert [c.ko for c in kept] == ["가려면", "-려면"]
+    assert warnings and "-려면" in warnings[0]
