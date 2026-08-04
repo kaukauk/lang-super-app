@@ -54,3 +54,23 @@ cd backend && .venv/bin/python -m pytest          # full suite (offline, determi
 
 Models: extraction → `gpt-4o`, sparring → `gpt-4o` (override via `LANGAPP_*_MODEL`).
 Anki interop: semicolon-separated TXT, content only (no scheduling crosses the boundary).
+
+## Anki add-on (for video autoplay)
+
+AV cards embed the clip with `<video autoplay>`. Anki's webview is Chromium, which
+refuses unmuted autoplay unless the document has a user activation — and Show
+Answer is clicked in the reviewer's *bottom* webview, so the card's own document
+never gets one and the clip sits paused. Install the add-on to clear that gate:
+
+```bash
+cp -r anki-addon/korean_immersion_autoplay ~/.local/share/Anki2/addons21/
+```
+
+Restart Anki. Without it the card still works, but you have to click or press a
+key once per card to start the clip. Starting muted and unmuting is *not* a
+workaround — Chromium pauses the element on unmute; see the add-on's docstring
+for the measurements.
+
+Clips are VP9/Opus WebM (`LANGAPP_AV_CLIP_EXT`) because Anki's bundled Qt
+WebEngine ships without proprietary codecs: an H.264/AAC mp4 renders an empty
+player.

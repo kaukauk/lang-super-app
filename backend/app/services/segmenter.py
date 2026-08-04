@@ -1,4 +1,5 @@
-"""Split a video of total duration T into study segments of 9-11 minutes,
+"""Split a video of total duration T into study segments of a fixed LENGTH (not a
+fixed count): the [SEG_MIN_S, SEG_MAX_S] band in config, currently 4:45-5:15,
 snapped to gaps between transcript cues so dialogue is never cut mid-sentence,
 with NO tiny leftover tail (the bug in the old section.py fixed-wall approach).
 
