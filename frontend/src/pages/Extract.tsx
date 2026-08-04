@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, type Chunk, type Extraction } from "../lib/api";
+import Markdown from "../components/Markdown";
 
 const TYPE_LABEL: Record<string, string> = {
   sentence: "Sentences",
@@ -61,7 +62,9 @@ export default function Extract() {
         <>
           <section className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
             <h2 className="mb-2 font-semibold">Narrative primer (read this before watching)</h2>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">{res.primer_md}</div>
+            <div className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+              <Markdown text={res.primer_md} />
+            </div>
           </section>
 
           {res.warnings.length > 0 && (

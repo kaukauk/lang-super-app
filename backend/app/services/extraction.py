@@ -50,10 +50,16 @@ SYSTEM_PROMPT = (
     "You are a Korean tutor preparing a learner to watch a ~10-minute cartoon "
     "segment. You receive the Korean transcript of that segment.\n"
     "Return ONLY a JSON object with exactly these keys:\n"
-    '- "primer_md": a scene-by-scene English summary (markdown), 1-3 sentences '
-    "per scene. ENGLISH ONLY — never include Korean text or translations. "
-    "Explicitly call out non-literal idioms, abstract bets/arguments, and shifts "
-    "in tone or formality. It is a mental blueprint of the plot.\n"
+    '- "primer_md": a detailed scene-by-scene English walkthrough (markdown). Give '
+    "each scene a short `### heading`, then 3-6 sentences covering: who is present "
+    "and how they relate, where they are, what each one WANTS, the specific beats in "
+    "order (not a vague gist), and how the scene resolves or hands off to the next. "
+    "Name characters consistently so they can be followed across scenes. ENGLISH "
+    "ONLY — never include Korean text or transliteration. Explicitly call out "
+    "non-literal idioms, abstract bets/arguments, jokes that depend on wordplay, and "
+    "shifts in tone or formality, since those are what the learner will otherwise "
+    "mishear. The learner reads this BEFORE watching with no subtitles, so it must "
+    "carry enough detail to follow the plot from sound alone.\n"
     '- "chunks": an array of EXACTLY 15 lexical chunks extracted AS THEY APPEAR '
     "in the dialogue (NOT dictionary form), split as:\n"
     f"    * {PER_TYPE} with type \"sentence\": SHORT, simple, high-frequency sentences "
@@ -207,7 +213,9 @@ def extract_text(
         data = provider.complete_json(
             system=SYSTEM_PROMPT,
             user=build_user_prompt(transcript, list(known), extra=extra),
-            model=model, max_tokens=2048,
+            # the primer and all 15 chunks share this budget; a detailed primer needs
+            # the headroom or the chunks get truncated into invalid JSON
+            model=model, max_tokens=4096,
         )
         try:
             result = parse_result(data)
