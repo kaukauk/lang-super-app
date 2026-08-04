@@ -81,6 +81,14 @@ _BLOCK_SIGNS = ("visitor data", "not a bot", "sign in to confirm",
 # is a fact about the video and outranks any guess about our connection.
 _NO_TRACK = "no subtitles for the requested languages"
 
+# Videos that are not coming back however long we wait: taken down on a rights
+# claim, made private, or deleted. Retrying is pure waste -- four attempts with
+# backoff each, per part, for something no amount of patience fixes -- and worse,
+# it reads as flakiness when it is really a permanent hole in the playlist.
+_GONE_SIGNS = ("video unavailable", "blocked due to", "private video",
+               "removed by the uploader", "account associated with this video "
+               "has been terminated", "video has been removed")
+
 
 class Gate:
     """A shared cooldown, because throttling is a property of the run, not the part.
@@ -254,6 +262,9 @@ def download(part: Part, *, attempts: int = 4) -> Path:
             # A half-written source.* would otherwise be mistaken for a good file.
             for stray in media.cache_dir(part.youtube_id).glob("source.*"):
                 stray.unlink(missing_ok=True)
+            if any(s in str(exc).lower() for s in _GONE_SIGNS):
+                raise media.MediaError(f"{part.name}: gone from YouTube: "
+                                       f"{str(exc)[-160:]}") from exc
             if attempt == attempts - 1:
                 break
             if Gate.is_block(exc):
@@ -541,6 +552,7 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
         transcriber = transcribe.WhisperTranscriber()
 
     stats = {"done": len(parts) - len(pending), "failed": 0}
+    gone: list[str] = []
     started = time.monotonic()
     for i, part in enumerate(prefetch(pending, workers), 1):
         link_video(part)
@@ -568,7 +580,12 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
                     sentences = transcribe_part(part, whisper_fallback())
             write_transcripts(part, sentences)
         except Exception as exc:                          # noqa: BLE001
-            print(f"  [fail] {part.name}: {type(exc).__name__}: {exc}")
+            if "gone from YouTube" in str(exc):
+                # Not a failure to retry later — the video does not exist any more.
+                gone.append(part.name)
+                print(f"  [gone] {part.name}: taken down at source")
+            else:
+                print(f"  [fail] {part.name}: {type(exc).__name__}: {exc}")
             stats["failed"] += 1
             continue
         stats["done"] += 1
@@ -576,6 +593,11 @@ def run_season(season: int, *, limit: Optional[int], download_only: bool,
         left = int(rate * (len(pending) - i))
         print(f"  [{i}/{len(pending)}] {part.name}  {len(sentences)} sentences"
               f"  (~{left // 60}m{left % 60:02d}s left)", flush=True)
+    if gone:
+        # Worth stating plainly: re-running will never fill these, so they are a
+        # permanent gap in the season rather than something to try again tonight.
+        print(f"  {len(gone)} part(s) taken down at source, unrecoverable: "
+              f"{', '.join(gone)}")
     return stats
 
 
