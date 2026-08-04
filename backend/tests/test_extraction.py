@@ -83,7 +83,7 @@ def test_primer_hangul_warning() -> None:
     assert any("Korean" in w for w in r.warnings)
 
 
-def test_extract_segment_and_accept_creates_due_cards() -> None:
+def test_extract_segment_and_accept_records_known_vocab() -> None:
     cues = [{"text": f"{i}번 줄이에요", "start": i * 2.0, "duration": 2.0} for i in range(400)]
     summary = ingest.ingest_cues("vidEXTRACT1", cues, title="t")
     seg = [s for s in ingest.get_segments(summary["video_id"]) if not s.is_full_review][0]
@@ -94,9 +94,12 @@ def test_extract_segment_and_accept_creates_due_cards() -> None:
 
     cards = ex.accept_chunks(result.chunks, segment_id=seg.id, today_ord=5000)
     assert len(cards) == 15
-    assert all(c.due_ord == 5001 for c in cards)
-    assert len(srs.due_cards(today_ord=5000)) == 0
-    assert len(srs.due_cards(today_ord=5001)) == 15
+    # Anki owns reviewing now, so nothing here is scheduled. These rows still matter:
+    # known_surface_forms reads them, and that is what stops extraction and sparring
+    # re-teaching a chunk the learner has already been given.
+    assert all(c.due_ord is None for c in cards)
+    assert len(srs.due_cards(today_ord=5001)) == 0
+    assert srs.known_surface_forms(deck_name="Korean") >= {c.ko for c in result.chunks}
 
 
 def test_bare_ending_grammar_chunks_are_rejected() -> None:

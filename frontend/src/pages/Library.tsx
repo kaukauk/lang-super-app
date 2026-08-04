@@ -59,8 +59,8 @@ export default function Library() {
           <Stat label="Total cards" value={stats?.total} />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Link to="/warmup" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">
-            Start warm-up →
+          <Link to="/chunks" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">
+            Browse chunks →
           </Link>
           <button onClick={doExport} className="rounded-lg border px-3 py-1.5 text-sm dark:border-neutral-700">Export .txt</button>
           <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm dark:border-neutral-700">

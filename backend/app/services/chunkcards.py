@@ -9,6 +9,7 @@ segment. A harvest is a handful of chunks from a conversation that just happened
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -89,6 +90,38 @@ def notes_from_lookups(lookups: list[dict], *, tags: Optional[list[str]] = None,
             tags=list(tags or ["korean-chunk", "lookup"]),
         ))
     return out
+
+
+def browse(deck: Optional[str] = None, *, anki: Optional[AnkiConnectClient] = None,
+           ) -> dict:
+    """Every harvested chunk card, read live from Anki.
+
+    Anki is the source of truth rather than a local mirror: it is where these are
+    actually reviewed, so an edit, suspend or delete there must show here
+    immediately. The cost is that this needs Anki running — the caller surfaces that
+    rather than silently showing a stale list."""
+    deck = deck or config.ANKI_CHUNK_DECK
+    anki = anki or AnkiConnectClient()
+    note_ids = anki.invoke("findNotes", query=f'deck:"{deck}"') or []
+    if not note_ids:
+        return {"deck": deck, "cards": []}
+    cards = []
+    for info in anki.invoke("notesInfo", notes=note_ids) or []:
+        f = {k: v.get("value", "") for k, v in (info.get("fields") or {}).items()}
+        cards.append({
+            "note_id": info.get("noteId"),
+            "prompt": f.get("Prompt", ""),
+            "chunk": f.get("Chunk", ""),
+            "context": f.get("Context", ""),
+            "ending": f.get("Ending", ""),
+            "anchor": f.get("Anchor", ""),
+            "target": f.get("Target", ""),
+            "gloss": f.get("Gloss", ""),
+            # strip the [sound:...] wrapper — the browser needs a bare filename
+            "audio": re.sub(r"^\[sound:(.*)\]$", r"\1", f.get("Audio", "").strip()),
+            "tags": info.get("tags") or [],
+        })
+    return {"deck": deck, "cards": cards}
 
 
 def push_chunks(

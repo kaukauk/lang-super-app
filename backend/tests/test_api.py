@@ -42,13 +42,11 @@ def test_full_flow_over_http(client) -> None:
     assert ex["counts"] == {"sentence": 5, "noun_verb": 5, "grammar": 5}
     assert len(ex["accepted_card_ids"]) == 15
 
-    due = client.get("/api/reviews/due", params={"today": 1001}).json()
-    assert len(due) == 15
-
-    g = client.post(f"/api/reviews/{due[0]['id']}/grade", json={"grade": "good"}).json()
-    assert g["state"] == "review"
-
-    assert client.get("/api/stats", params={"today": 1001}).json()["total"] == 15
+    # Anki owns reviewing: accepted chunks are recorded as known vocab, never
+    # scheduled, and the in-app review endpoints are gone with the warm-up page
+    assert client.get("/api/reviews/due").status_code == 404
+    stats = client.get("/api/stats", params={"today": 1001}).json()
+    assert stats["total"] == 15 and stats["due"] == 0
 
     txt = client.get("/api/export.txt").text
     assert txt.startswith("#separator:;")

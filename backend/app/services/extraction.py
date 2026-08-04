@@ -422,13 +422,20 @@ def accept_chunks(
     chunks: list[Chunk], *, segment_id: Optional[int] = None,
     deck_name: str = "Korean", today_ord: Optional[int] = None,
 ) -> list[Card]:
-    """Turn accepted chunks into new cards, due the NEXT day (tomorrow's warm-up)."""
-    today = today_ord if today_ord is not None else srs.today_ordinal()
+    """Record accepted chunks as KNOWN vocabulary — never scheduled.
+
+    Anki owns reviewing now, so nothing here is given a due date. The rows still
+    matter: `srs.known_surface_forms` reads them, and that is what stops extraction
+    and sparring from re-teaching something the learner has already been given. Drop
+    the row and every future session happily suggests the same chunk again.
+
+    `today_ord` is accepted and ignored, so existing callers and the CLI keep
+    working; there is no schedule left for it to move."""
     cards: list[Card] = []
     for c in chunks:
         cards.append(srs.add_card(
             front_ko=c.ko, back_en=c.en, gloss=c.gloss, kind=c.type,
             surface_forms=[c.ko], source_segment_id=segment_id,
-            deck_name=deck_name, state="new", due_ord=today + 1,
+            deck_name=deck_name, state="new", due_ord=None,
         ))
     return cards

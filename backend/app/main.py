@@ -60,10 +60,6 @@ class IngestBody(BaseModel):
     replace: bool = False
 
 
-class GradeBody(BaseModel):
-    grade: str
-
-
 class CardBody(BaseModel):
     ko: str
     en: str = ""
@@ -279,21 +275,25 @@ def accept_chunks_ep(body: AcceptBody) -> dict[str, Any]:
     return {"accepted": len(cards)}
 
 
-@app.get("/api/reviews/due")
-def due(deck: str = "Korean", today: Optional[int] = None, limit: Optional[int] = None):
-    return [{"id": c.id, "kind": c.kind, "front_ko": c.front_ko, "back_en": c.back_en,
-             "gloss": c.gloss, "state": c.state} for c in
-            srs.due_cards(deck_name=deck, today_ord=today, limit=limit)]
-
-
-@app.post("/api/reviews/{card_id}/grade")
-def grade(card_id: int, body: GradeBody) -> dict[str, Any]:
+@app.get("/api/chunks/browse")
+def chunks_browse() -> dict[str, Any]:
+    """Harvested chunk cards, live from Anki. Anki owns reviewing; this is read-only."""
     try:
-        c = srs.review_card(card_id, body.grade)
+        return chunkcards.browse()
     except Exception as exc:
-        raise HTTPException(400, str(exc))
-    return {"id": c.id, "state": c.state, "interval": c.interval, "ease": c.ease,
-            "due_ord": c.due_ord}
+        raise HTTPException(503, f"Anki is not reachable: {exc}")
+
+
+@app.get("/api/chunks/audio/{filename}")
+def chunk_audio(filename: str):
+    """Serve a chunk's TTS from our own cache rather than Anki's collection.media —
+    same file, and it means browsing works without reaching into Anki's data dir."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "bad filename")
+    path = Path(config.MEDIA_CACHE_DIR) / "chunks" / filename
+    if not path.exists():
+        raise HTTPException(404, "audio not found")
+    return FileResponse(str(path), media_type="audio/mpeg")
 
 
 @app.get("/api/stats")

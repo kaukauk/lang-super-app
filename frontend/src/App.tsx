@@ -1,6 +1,6 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import Library from "./pages/Library";
-import WarmUp from "./pages/WarmUp";
+import Chunks from "./pages/Chunks";
 import Watch from "./pages/Watch";
 import Spar from "./pages/Spar";
 import Extract from "./pages/Extract";
@@ -33,13 +33,13 @@ export default function App() {
             한국어 <span className="text-indigo-600">Immersion</span>
           </NavLink>
           <Tab to="/" label="Library" />
-          <Tab to="/warmup" label="Warm-up" />
+          <Tab to="/chunks" label="Chunks" />
         </div>
       </header>
       <main className="mx-auto max-w-5xl p-4">
         <Routes>
           <Route path="/" element={<Library />} />
-          <Route path="/warmup" element={<WarmUp />} />
+          <Route path="/chunks" element={<Chunks />} />
           <Route path="/extract/:sid" element={<Extract />} />
           <Route path="/primer/:sid" element={<Primer />} />
           <Route path="/check/:sid" element={<Check />} />

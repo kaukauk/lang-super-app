@@ -30,6 +30,10 @@ export type SparReply = {
   suggested_user_reply_en: string; targets_used: string[]; unexpected: string[];
   warnings: string[]; glosses: Record<string, string>;
 };
+export type ChunkCard = {
+  note_id: number; prompt: string; chunk: string; context: string; ending: string;
+  anchor: string; target: string; gloss: string; audio: string; tags: string[];
+};
 export type Lookup = { word: string; gloss_en: string; ending: string; lemma: string };
 export type SparOpening = {
   anchor_ko: string; role_en: string; prompt_en: string; scene_en: string;
@@ -79,10 +83,6 @@ export const api = {
     req<Extraction>(`/segments/${sid}/extract`, post(body)),
   acceptChunks: (body: { chunks: Chunk[]; segment_id?: number }) =>
     req<{ accepted: number }>("/cards/accept", post(body)),
-  due: (params?: { today?: number; limit?: number }) =>
-    req<Card[]>(`/reviews/due${qs(params)}`),
-  grade: (cardId: number, grade: string) =>
-    req<Card>(`/reviews/${cardId}/grade`, post({ grade })),
   stats: (params?: { today?: number }) => req<Stats>(`/stats${qs(params)}`),
   cards: () => req<Card[]>("/cards"),
   addCard: (body: { ko: string; en?: string; gloss?: string }) =>
@@ -96,6 +96,8 @@ export const api = {
     req<SparOpening>(`/spar/${sid}/open`, post({ segment_id })),
   sparTurn: (sid: number, body: { text: string; scene?: string; wind_down?: boolean }) =>
     req<SparReply>(`/spar/${sid}/turn`, post(body)),
+  chunksBrowse: () => req<{ deck: string; cards: ChunkCard[] }>("/chunks/browse"),
+  chunkAudioUrl: (f: string) => `/api/chunks/audio/${encodeURIComponent(f)}`,
   sparLookup: (sid: number, word: string, context_ko: string,
                known_glosses: Record<string, string> = {}) =>
     req<Lookup>(`/spar/${sid}/lookup`, post({ word, context_ko, known_glosses })),
