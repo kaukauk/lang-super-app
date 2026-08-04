@@ -57,6 +57,17 @@ YTDLP_BIN = os.environ.get("LANGAPP_YTDLP_BIN", "yt-dlp")
 # Cap resolution — these clips are for shadowing/recall, not cinema; smaller = faster.
 YTDLP_FORMAT = os.environ.get(
     "LANGAPP_YTDLP_FORMAT", "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b")
+# Card clips are embedded with an HTML <video> in the Anki template, so they must
+# be in a codec Anki's webview can decode. Its bundled Qt WebEngine is built
+# without proprietary codecs — an H.264/AAC mp4 renders an empty player
+# (canPlayType('video/mp4; codecs="avc1"') == "") — but VP9/Opus in WebM plays.
+# The long watch snippet stays mp4: it is stream-copied and played by the app's
+# own browser UI, which has no such limitation.
+AV_CLIP_EXT = os.environ.get("LANGAPP_AV_CLIP_EXT", "webm")
+# VP9 is slower than x264; cpu-used 4 keeps a few-second clip near real time.
+AV_CLIP_CRF = os.environ.get("LANGAPP_AV_CLIP_CRF", "34")
+AV_CLIP_CPU_USED = os.environ.get("LANGAPP_AV_CLIP_CPU_USED", "4")
+
 FFMPEG_BIN = os.environ.get("LANGAPP_FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("LANGAPP_FFPROBE_BIN", "ffprobe")
 

@@ -53,12 +53,11 @@ class NoteSpec:
             # [sound:...] is what makes Anki autoplay it on the front.
             "TargetAudio": f"[sound:{self.target_audio_file}]" if self.target_audio_file else "",
             "ContextKo": self.context_ko,
-            # Also [sound:...], which routes the clip to Anki's mpv player rather
-            # than the webview. An HTML <video> cannot play these: Anki's bundled
-            # Qt WebEngine ships without proprietary codecs, so H.264/AAC decode
-            # to a blank frame (canPlayType('video/mp4; codecs="avc1"') == "").
-            # mpv has no such limit, and this is the path Anki is built around.
-            "Clip": f"[sound:{self.clip_file}]" if self.clip_file else "",
+            # Bare name — the template wraps it in <video> so the clip is embedded
+            # in the card rather than handed to Anki's external mpv player. This
+            # only renders for codecs the webview can decode, which is why clips
+            # are written as VP9/Opus WebM (see config.AV_CLIP_EXT).
+            "Clip": self.clip_file,
             "Explanation": self.explanation_en,
         }
 
@@ -84,7 +83,7 @@ _FRONT = """<div class="target">{{TargetKo}}</div>
 # No {{FrontSide}} and no {{TargetAudio}}: the clip carries the original audio,
 # and replaying the TTS front over it would talk across the video.
 _BACK = """<div class="target">{{TargetKo}}</div>
-{{Clip}}
+<video src="{{Clip}}" autoplay controls playsinline></video>
 {{#ContextKo}}<div class="context">{{ContextKo}}</div>{{/ContextKo}}
 <hr>
 <div class="explanation">{{Explanation}}</div>

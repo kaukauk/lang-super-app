@@ -126,12 +126,22 @@ def build_ffmpeg_clip_cmd(
 ) -> list[str]:
     """Cut [start_s, end_s] of `src` as a video clip. reencode=True is frame
     accurate (use for short card clips); reencode=False stream-copies (fast, fine
-    for the long ~5-min watch snippet)."""
+    for the long ~5-min watch snippet).
+
+    The codec follows the output extension: `.webm` gets VP9/Opus, which is what
+    Anki's webview can actually decode (see config.AV_CLIP_EXT); anything else
+    gets H.264/AAC."""
     cmd = [config.FFMPEG_BIN, "-y", "-ss", f"{start_s:.3f}", "-to", f"{end_s:.3f}", "-i", src]
-    if reencode:
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart"]
-    else:
+    if not reencode:
         cmd += ["-c", "copy"]
+    elif out.endswith(".webm"):
+        cmd += [
+            "-c:v", "libvpx-vp9", "-crf", str(config.AV_CLIP_CRF), "-b:v", "0",
+            "-deadline", "good", "-cpu-used", str(config.AV_CLIP_CPU_USED),
+            "-row-mt", "1", "-c:a", "libopus", "-b:a", "96k",
+        ]
+    else:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart"]
     cmd += [out]
     return cmd
 

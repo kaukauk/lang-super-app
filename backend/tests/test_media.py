@@ -42,6 +42,17 @@ def test_clip_cmd_reencode_vs_copy() -> None:
     assert copy[copy.index("-c") + 1] == "copy"
 
 
+def test_clip_cmd_webm_uses_vp9_opus() -> None:
+    """Card clips must be VP9/Opus: Anki's webview has no H.264/AAC decoder, so an
+    mp4 embedded with <video> renders an empty player."""
+    cmd = media.build_ffmpeg_clip_cmd("/v/s.mp4", 10.0, 20.0, "/o/c.webm", reencode=True)
+    assert "libvpx-vp9" in cmd and "libopus" in cmd
+    assert "libx264" not in cmd
+    # a stream copy stays a stream copy regardless of container
+    copy = media.build_ffmpeg_clip_cmd("/v/s.mp4", 10.0, 20.0, "/o/c.webm", reencode=False)
+    assert "libvpx-vp9" not in copy and copy[copy.index("-c") + 1] == "copy"
+
+
 def test_segment_dir_under_cache(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(media.config, "MEDIA_CACHE_DIR", str(tmp_path))
     d = media.segment_dir("vidID123456", 3)

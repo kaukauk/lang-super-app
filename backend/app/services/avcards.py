@@ -308,7 +308,7 @@ def build_av_cards(
                 result.warnings.append(f"dropped misaligned target: {sent.text!r}")
                 continue
 
-            clip_name = bt.media_name("clip", "mp4", youtube_id, segment_id)
+            clip_name = bt.media_name("clip", config.AV_CLIP_EXT, youtube_id, segment_id)
             c_start, c_end = pad(bt.context_start_s, bt.end_s)
             clip_path = media.cut_clip(src_path, c_start, c_end, seg_dir / clip_name, reencode=True)
             bt.audio_file, bt.clip_file = audio_name, clip_name

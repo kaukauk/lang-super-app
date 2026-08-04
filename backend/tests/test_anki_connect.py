@@ -16,12 +16,12 @@ from app.anki.connect import (
 
 def test_note_fields_wrap_media_in_sound_tags() -> None:
     note = NoteSpec(target_ko="자전거를 타고 싶어요", target_audio_file="front.mp3",
-                    context_ko="오늘 뭐 해요?", clip_file="clip.mp4",
+                    context_ko="오늘 뭐 해요?", clip_file="clip.webm",
                     explanation_en="They want to ride a bike.")
     f = note.fields()
     assert f["TargetKo"] == "자전거를 타고 싶어요"
     assert f["TargetAudio"] == "[sound:front.mp3]"        # autoplays on front
-    assert f["Clip"] == "[sound:clip.mp4]"               # plays via mpv, not the webview
+    assert f["Clip"] == "clip.webm"                      # bare name; template embeds <video>
     assert f["ContextKo"] == "오늘 뭐 해요?"
     assert f["Explanation"] == "They want to ride a bike."
 
@@ -34,9 +34,7 @@ def test_model_payload_has_five_fields_and_one_template() -> None:
     back = p["cardTemplates"][0]["Back"]
     assert "{{TargetKo}}" in front and "{{TargetAudio}}" in front
     assert "{{Clip}}" in back and "{{Explanation}}" in back
-    # An HTML <video> would render a blank player: Anki's Qt WebEngine has no
-    # H.264/AAC decoder. The bare {{Clip}} av-tag hands the clip to mpv instead.
-    assert "<video" not in back
+    assert "<video" in back and "autoplay" in back          # embedded, not an mpv handoff
     # back must NOT replay the front audio (would mask the video's own target audio)
     assert "{{FrontSide}}" not in back and "{{TargetAudio}}" not in back
 
