@@ -241,6 +241,24 @@ def stream_codecs(path: Path) -> dict[str, str]:
     return {s.get("codec_type", ""): s.get("codec_name", "") for s in streams}
 
 
+def video_params(path: Path) -> tuple:
+    """The properties a stream-copy concatenation requires to match."""
+    cmd = [config.FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
+           "-show_entries", "stream=codec_name,profile,width,height,pix_fmt",
+           "-of", "json", str(path)]
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    s = (json.loads(out.stdout or "{}").get("streams") or [{}])[0]
+    return (s.get("codec_name"), s.get("profile"), s.get("width"),
+            s.get("height"), s.get("pix_fmt"))
+
+
+def target_size(pieces: list[Piece]) -> tuple[int, int]:
+    """Largest frame among the pieces — upscaling the odd one out beats
+    downscaling the majority to meet it."""
+    sizes = [(p[2] or 0, p[3] or 0) for p in (video_params(pc.video) for pc in pieces)]
+    return max((w for w, _ in sizes), default=1280), max((h for _, h in sizes), default=720)
+
+
 def trim_head(src: Path, start_s: float, end_s: float, out: Path,
               codecs: dict[str, str]) -> Path:
     """Re-cut `src` from `start_s`, keeping the codecs the concat expects.
@@ -269,10 +287,16 @@ def concat_video(pieces: list[Piece], out: Path) -> None:
     seeking a copy lands on the nearest keyframe rather than the requested time.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
-    if any(pc.trim_start_s > 0 for pc in pieces):
-        _concat_filter(pieces, out)
-    else:
+    # Copy only when nothing is trimmed AND every piece already agrees on codec,
+    # profile, resolution and pixel format. That second condition is not a
+    # formality: YouTube served different formats for different videos in the same
+    # playlist, so episode 14 arrived as seven 1280x720 parts and one 720x480, and
+    # copying them together produced 50.8 minutes instead of 22.4.
+    uniform = len({video_params(pc.video) for pc in pieces}) == 1
+    if uniform and not any(pc.trim_start_s > 0 for pc in pieces):
         _concat_copy(pieces, out)
+    else:
+        _concat_filter(pieces, out)
 
 
 def _concat_copy(pieces: list[Piece], out: Path) -> None:
@@ -312,9 +336,21 @@ def _concat_filter(pieces: list[Piece], out: Path) -> None:
         if pc.trim_start_s > 0:
             cmd += ["-ss", f"{pc.trim_start_s:.3f}"]
         cmd += ["-i", str(pc.video)]
-    streams = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(pieces)))
+
+    # concat demands identical geometry from every input, so normalise first.
+    # Letterbox rather than stretch: a part that arrived at a different resolution
+    # is the same 4:3 picture, and squashing it to fit would distort the image.
+    w, h = target_size(pieces)
+    chains, labels = [], ""
+    for i in range(len(pieces)):
+        chains.append(
+            f"[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]")
+        chains.append(f"[{i}:a:0]aformat=sample_rates=48000:channel_layouts=stereo[a{i}]")
+        labels += f"[v{i}][a{i}]"
+    graph = ";".join(chains) + f";{labels}concat=n={len(pieces)}:v=1:a=1[v][a]"
     cmd += [
-        "-filter_complex", f"{streams}concat=n={len(pieces)}:v=1:a=1[v][a]",
+        "-filter_complex", graph,
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "libopus", "-b:a", "128k",
