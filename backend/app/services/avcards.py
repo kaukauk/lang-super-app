@@ -207,7 +207,8 @@ def build_av_cards(
     sentences: Optional[list[Sentence]] = transcribe.load_cached(youtube_id, segment_id)
     src_path: Optional[Path] = None
     if make_media:
-        vp = media.ensure_video(youtube_id, url=url, section=section)
+        vp = media.ensure_video(youtube_id, url=url, section=section,
+                                local_path=video.local_path)
         src_path = vp.video
         snippet = seg_dir / "snippet.mp4"
         if not snippet.exists():

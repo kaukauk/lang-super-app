@@ -135,7 +135,7 @@ def test_build_av_push_via_fake_transport(cache_tmp, monkeypatch) -> None:
         return Path(out)
 
     monkeypatch.setattr(media, "ensure_video",
-                        lambda yid, url=None, section=None: media.VideoPaths(yid, cache_tmp, cache_tmp / "s.mp4", 300.0))
+                        lambda yid, **kw: media.VideoPaths(yid, cache_tmp, cache_tmp / "s.mp4", 300.0))
     monkeypatch.setattr(media, "cut_clip", _stub_cut)
     monkeypatch.setattr(media, "extract_audio", _stub_cut)
 

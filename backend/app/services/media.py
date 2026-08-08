@@ -182,11 +182,22 @@ def probe_duration(src: str | Path) -> float:
 
 def ensure_video(
     youtube_id: str, *, url: Optional[str] = None, section: Optional[str] = None,
+    local_path: Optional[str] = None,
 ) -> VideoPaths:
-    """Download the video once into the cache (idempotent). Returns paths + the
-    true ffprobe duration (more accurate than the last-caption-end estimate).
+    """Get the video file, downloading it once into the cache if need be.
+
+    `local_path` short-circuits the download: a joined episode is already on disk,
+    and its id is a synthetic `local:...` key that yt-dlp answers with "Unsupported
+    url scheme". Handled here rather than at each caller so every consumer of a
+    video file — clip cutting, audio extraction, AV cards — gets it for free.
 
     `section` (e.g. "*0:00-30:00") limits a long video to a time window."""
+    if local_path:
+        p = Path(local_path)
+        if not p.exists():
+            raise MediaError(f"local video missing: {p}")
+        return VideoPaths(youtube_id=youtube_id, dir=p.parent, video=p,
+                          duration_s=probe_duration(p))
     d = cache_dir(youtube_id)
     d.mkdir(parents=True, exist_ok=True)
     video = d / "source.mp4"
