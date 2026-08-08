@@ -385,22 +385,36 @@ TARGET_SYSTEM = (
     "predicate). Prefer ~4-10 words. STRICTLY AVOID interjections, names, single "
     "words, or fragments (e.g. reject things like 'hey', 'stop', 'weightlifting', "
     "'Player Kim'). Avoid sentences whose vocabulary the learner already knows.\n"
+    "Some entries carry a bracketed lead-in. That is CONTEXT ONLY: use it to judge "
+    "what the line means, but your explanation must describe ONLY the numbered "
+    "line. Do not translate or summarise the lead-in — the learner is given it "
+    "already and is not being asked to produce it.\n"
     'Return ONLY JSON: {"targets":[{"index":<int from the list>,"ko":"<the sentence '
     'exactly as numbered>","explanation_en":"<one short sentence: what is happening '
-    "/ what it means IN CONTEXT — NOT a stiff word-for-word translation>\"}]}. "
+    "/ what the NUMBERED LINE means IN CONTEXT — NOT a stiff word-for-word "
+    "translation, and NOT a translation of the lead-in>\"}]}. "
     "Order them best-first. No markdown fences."
 )
 
 
-def build_targets_prompt(sentences: list[str], avoid_forms: list[str], n: int) -> str:
+def build_targets_prompt(sentences: list[str], avoid_forms: list[str], n: int,
+                         leads: Optional[list[str]] = None) -> str:
+    """`sentences` are the lines that will BECOME cards; `leads` are their lead-ins.
+
+    The two are listed separately so the model can judge a line in context while
+    explaining only the line itself. Merging them is what produced explanations
+    covering material the card never asks for."""
     avoid = ", ".join(sorted(set(avoid_forms))[:400]) or "(none yet)"
-    numbered = "\n".join(f"{i}: {s}" for i, s in enumerate(sentences))
+    rows = []
+    for i, s in enumerate(sentences):
+        lead = (leads[i] if leads and i < len(leads) else "").strip()
+        rows.append(f"{i}: {s}" + (f"\n   (lead-in, context only: {lead})" if lead else ""))
     return "\n".join([
         f"Already-known items to AVOID picking: {{{avoid}}}",
         f"Return your {n} best COMPLETE-sentence targets, best first.",
         "",
         "Scene sentences (index: text):",
-        numbered,
+        "\n".join(rows),
     ])
 
 
@@ -472,14 +486,20 @@ def pick_targets(
         # the shortest available instead, so a hard day still produces a full set.
         eligible = sorted(range(len(sentences)), key=lambda i: len(sentences[i]))[:n]
         eligible.sort()
-    subset = [sentences[i] for i in eligible]
+    # Offer the CLAUSE that will become the card, with its lead-in alongside as
+    # context. Judging and explaining the whole sentence produced hints that
+    # translated material the card never asks for — the learner reads the lead-in,
+    # so an explanation covering it gives away the answer to a different question.
+    parts = [drillable_part(sentences[i]) for i in eligible]
+    leads = [lead for lead, _ in parts]
+    subset = [clause for _, clause in parts]
 
     n = min(n, len(subset))
     # over-request so we can drop fragments and still reach n good full sentences
     n_request = min(len(subset), n + 5)
     data = provider.complete_json(
         system=TARGET_SYSTEM.replace("{n}", str(n_request)),
-        user=build_targets_prompt(subset, list(known), n_request),
+        user=build_targets_prompt(subset, list(known), n_request, leads),
         model=model, max_tokens=1600,
     )
     raw = data.get("targets") if isinstance(data, dict) else None
@@ -499,7 +519,9 @@ def pick_targets(
         idx = eligible[sub_idx]           # back to an index into the full list
         if idx in seen:
             continue
-        if not is_full_sentence(sentences[idx]):       # drop interjections/fragments
+        # Judge the CLAUSE, since that is what becomes the card. A compound
+        # sentence can read as a fine sentence while its tail clause is a fragment.
+        if not is_full_sentence(subset[sub_idx]):      # drop interjections/fragments
             continue
         seen.add(idx)
         picks.append(TargetPick(index=idx, ko=sentences[idx],
