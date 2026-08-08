@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Cue } from "../lib/api";
 import { fmt } from "../lib/fmt";
 
@@ -43,6 +43,8 @@ type Props = {
 export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
                                       seekTo, stopAt }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [full, setFull] = useState(false);
   const [time, setTime] = useState(0);       // snippet-relative seconds
   const [dur, setDur] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -74,13 +76,41 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
   const progress = dur ? Math.min(100, Math.max(0, ((time - (seekTo ?? 0)) / dur) * 100)) : 0;
   const toggle = () => { const v = vidRef.current; if (!v) return; v.paused ? v.play() : v.pause(); };
 
+  // Fullscreen the WRAPPER, not the <video>. Fullscreening the element itself
+  // leaves the subtitle overlay behind, which is the whole point of study mode.
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    boxRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
+  useEffect(() => {
+    const onChange = () => setFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // f toggles, matching every video player the user already has muscle memory for.
+  // Ignored while typing so it cannot fire from a text field elsewhere on the page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div>
-      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+      {/* aspect-video sizes the box normally; in fullscreen the browser sizes it,
+          so drop the ratio and let the video letterbox itself inside the screen */}
+      <div ref={boxRef}
+        className={`group relative w-full overflow-hidden bg-black ${full ? "h-screen" : "aspect-video rounded-xl"}`}>
         <video
           ref={vidRef}
           src={src}
-          className="h-full w-full"
+          className="h-full w-full object-contain"
           controls={mode === "study"}
           controlsList="nodownload noplaybackrate"
           onTimeUpdate={(e) => {
@@ -106,6 +136,27 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
           >
             {active.text}
             <span className="ml-2 hidden text-xs text-indigo-200 group-hover:inline">＋ save</span>
+          </button>
+        )}
+
+        {/* Sits over the video so it is reachable in fullscreen too, where the
+            controls below the box are off-screen. */}
+        <button
+          onClick={toggleFullscreen}
+          title={full ? "Exit fullscreen (f)" : "Fullscreen (f)"}
+          className="absolute right-3 top-3 rounded-lg bg-black/60 px-3 py-1.5 text-sm text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
+        >
+          {full ? "⤢ Exit" : "⤢ Fullscreen"}
+        </button>
+
+        {/* In fullscreen the play/pause row is off-screen, so blind mode would have
+            no way to pause at all — put one over the video. */}
+        {full && (
+          <button
+            onClick={toggle}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-black/60 px-4 py-2 text-sm font-semibold text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
+          >
+            {playing ? "Pause" : "Play"}
           </button>
         )}
       </div>

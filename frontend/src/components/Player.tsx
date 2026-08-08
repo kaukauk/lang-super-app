@@ -51,7 +51,9 @@ type Props = {
 
 export default function Player({ youtubeId, startS, endS, mode, cues = [], onSaveCue }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
+  const [full, setFull] = useState(false);
   const [time, setTime] = useState(startS);
   const [playing, setPlaying] = useState(false);
   const [unit, setUnit] = useState<"line" | "sentence">("line");
@@ -116,10 +118,44 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onSav
 
   const progress = Math.min(100, Math.max(0, ((time - startS) / (endS - startS)) * 100));
 
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    boxRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
+  useEffect(() => {
+    const onChange = () => setFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // f toggles, as in every other video player. Ignored while typing so it cannot
+  // fire from a text field elsewhere on the page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div>
-      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+      <div ref={boxRef}
+        className={`group relative w-full overflow-hidden bg-black ${full ? "h-screen" : "aspect-video rounded-xl"}`}>
         <div ref={hostRef} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />
+        {/* Fullscreen the wrapper, not the iframe: the subtitle overlay and the
+            blind-mode control shade are ours, and fullscreening the iframe would
+            hand the screen to YouTube's own player and leave them behind. */}
+        <button
+          onClick={toggleFullscreen}
+          title={full ? "Exit fullscreen (f)" : "Fullscreen (f)"}
+          className="absolute right-3 top-3 z-10 rounded-lg bg-black/60 px-3 py-1.5 text-sm text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
+        >
+          {full ? "⤢ Exit" : "⤢ Fullscreen"}
+        </button>
         {mode === "blind" && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/30 to-transparent" />
         )}
