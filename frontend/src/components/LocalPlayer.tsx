@@ -111,7 +111,12 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
           ref={vidRef}
           src={src}
           className="h-full w-full object-contain"
-          controls={mode === "study"}
+          // Never the browser's own controls, in either mode. They bring a seek
+          // bar, and skipping ahead defeats the point of a fixed 5-minute day:
+          // the study pass is meant to be the same footage again, watched
+          // through, not scrubbed. Both modes now share the play/pause and
+          // read-only progress bar below.
+          controls={false}
           controlsList="nodownload noplaybackrate"
           onTimeUpdate={(e) => {
             const v = e.currentTarget;
