@@ -361,9 +361,13 @@ def build_av_cards(
                 if bt.anki_note_id:
                     result.pushed += 1
 
-        # in-app primer audio (clean TTS) — only for accepted cards; never to Anki
+        # In-app primer audio (clean TTS) — only for accepted cards; never to Anki.
+        # The TARGET clause alone, not the whole sentence: the lead-in is shown as
+        # context to be read, and hearing it spoken makes the primer a recording of
+        # a sentence rather than a drill of the one thing being learned.
         bt.primer_audio = str(tts.synth_cached(
-            sent.text, seg_dir, provider=tts_provider, prefix=f"primer_{segment_id}_{accepted}"))
+            bt.target_ko, seg_dir, provider=tts_provider,
+            prefix=f"primer_{segment_id}_{accepted}"))
         result.targets.append(bt)
         accepted += 1
 

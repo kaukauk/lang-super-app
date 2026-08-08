@@ -63,7 +63,16 @@ export default function Primer() {
       </div>
 
       <div className="rounded-2xl border border-neutral-200 bg-white p-10 text-center dark:border-neutral-800 dark:bg-neutral-900">
+        {/* Lead-up in Korean, read not recalled: it sets the scene for the target
+            without becoming part of what you have to produce. Deliberately quieter
+            and smaller so the eye lands on the target first. */}
+        {it.context_ko && (
+          <p className="mx-auto mb-4 max-w-2xl text-base leading-relaxed text-neutral-400 dark:text-neutral-500">
+            {it.context_ko}
+          </p>
+        )}
         <div className="text-3xl font-semibold leading-snug">{it.target_ko}</div>
+        {/* audio is the target clause only — the context above is not spoken */}
         <audio ref={audioRef} src={api.primerAudioUrl(id, it.target_idx)} />
         <div className="mt-6 flex items-center justify-center gap-3">
           <button onClick={() => { audioRef.current?.load(); audioRef.current?.play().catch(() => {}); }}
