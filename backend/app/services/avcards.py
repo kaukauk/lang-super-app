@@ -80,6 +80,30 @@ def _hangul(s: str) -> str:
     return re.sub(r"[^가-힣]", "", s)
 
 
+def _clause_start_s(sent, clause_ko: str) -> float:
+    """When the target is the tail clause, where its audio begins.
+
+    Whisper gives per-word timings, so the clip can start on the clause instead of
+    replaying the whole sentence — otherwise the card would play the lead-in it is
+    deliberately not asking you to produce. Matching walks the word stream and
+    takes the first word whose position lines up with the clause; on any mismatch
+    it falls back to the sentence start, which is merely a longer clip rather than
+    a wrong one."""
+    clause = (clause_ko or "").replace(" ", "")
+    if not clause or not sent.words:
+        return sent.start_s
+    joined = "".join(w.text for w in sent.words).replace(" ", "")
+    pos = joined.rfind(clause)
+    if pos < 0:
+        return sent.start_s
+    seen = 0
+    for w in sent.words:
+        if seen >= pos:
+            return w.start_s
+        seen += len(w.text.replace(" ", ""))
+    return sent.start_s
+
+
 def relocate_target(
     transcriber: Transcriber, src: Path, seg_dir: Path, text: str,
     approx_start: float, approx_end: float, *, window_s: float, min_ratio: float = 0.6,
@@ -271,10 +295,19 @@ def build_av_cards(
             break
         sent = sentences[p.index]
         ctx = pick_context(sentences, p.index, max_back=config.AV_CONTEXT_MAX_LOOKBACK)
+
+        # Drill one clause, not a whole compound sentence. "A했고 B했어요" as a single
+        # card tests two grammar points and several words with one pass/fail, and a
+        # miss tells you nothing about which half you did not know. The earlier
+        # clause becomes the context line instead — still shown, just not recalled.
+        lead_ko, target_ko = extraction.drillable_part(sent.text)
+        target_start = _clause_start_s(sent, target_ko)
+        context_ko = " ".join(x for x in (ctx.text if ctx else "", lead_ko) if x).strip()
+
         bt = BuiltTarget(
-            target_idx=accepted, target_ko=sent.text, context_ko=ctx.text if ctx else "",
+            target_idx=accepted, target_ko=target_ko, context_ko=context_ko,
             explanation_en=p.explanation_en,
-            start_s=base + sent.start_s, end_s=base + sent.end_s,
+            start_s=base + target_start, end_s=base + sent.end_s,
             context_start_s=base + (ctx.start_s if ctx else sent.start_s),
         )
 

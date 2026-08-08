@@ -109,6 +109,13 @@ WHISPER_VAD = os.environ.get("LANGAPP_WHISPER_VAD", "1") not in ("0", "", "false
 # a single 50-second "sentence" as a card target and a minute-long clip.
 WHISPER_SENT_SOFT_MAX_S = float(os.environ.get("LANGAPP_WHISPER_SENT_SOFT_MAX_S", "8.0"))
 WHISPER_SENT_HARD_MAX_S = float(os.environ.get("LANGAPP_WHISPER_SENT_HARD_MAX_S", "12.0"))
+# Longest CLAUSE offered as a primer/card target, in characters.
+#
+# A backstop, not the main control: clause splitting is what keeps targets to one
+# thing to produce, and this only catches a single clause that is genuinely huge.
+# Deliberately loose — a tight cap here would filter out connective grammar
+# (-고, -지만, -는데) rather than splitting it, which is the opposite of the point.
+AV_TARGET_MAX_CHARS = int(os.environ.get("LANGAPP_AV_TARGET_MAX_CHARS", "45"))
 
 # --- TTS (edge-tts, Primer audio only) ----------------------------------
 TTS_VOICE = os.environ.get("LANGAPP_TTS_VOICE", "ko-KR-SunHiNeural")

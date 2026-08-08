@@ -38,6 +38,11 @@ class Morph:
     surface: str    # the morpheme as it appeared
     tag: str        # Kiwi POS tag (may carry a -I/-R irregularity suffix)
     lemma: str      # dictionary form (verbs/adjectives end in 다)
+    # Character span in the original text. Needed to cut a sentence at a specific
+    # morpheme — a surface form like "고" occurs all over a sentence, so the
+    # position is the only unambiguous way back to where it was.
+    start: int = -1
+    end: int = -1
 
     @property
     def is_content(self) -> bool:
@@ -55,7 +60,9 @@ def analyze(text: str) -> list[Morph]:
     if not text or not text.strip():
         return []
     return [
-        Morph(surface=t.form, tag=t.tag, lemma=_lemma_of(t))
+        Morph(surface=t.form, tag=t.tag, lemma=_lemma_of(t),
+              start=getattr(t, "start", -1),
+              end=getattr(t, "start", -1) + getattr(t, "len", 0))
         for t in _get_kiwi().tokenize(text)
     ]
 

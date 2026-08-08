@@ -305,6 +305,70 @@ def extract_segment(
 
 # --- AV target selection (over the Whisper sentence list) ----------------
 
+# Below this a "clause" is a fragment, not something worth drilling on its own.
+_MIN_CLAUSE_CHARS = 4
+# A production target shorter than this is not really a test: "왔어요" with every
+# content word already supplied by the context line asks you to conjugate, not to
+# say anything.
+_MIN_TARGET_CHARS = 8
+
+
+def split_clauses(text: str) -> list[str]:
+    """Break a sentence at its clause joints, using morphology rather than spelling.
+
+    Two clauses welded with -고 or -지만 make one card that tests two grammar points
+    and several words at once, with a single pass/fail: miss any part and you cannot
+    tell which part you missed. Splitting lets one clause be the thing to produce
+    while the rest stays visible as context.
+
+    The joint has to be identified by POS tag, not by how the word ends. Kiwi tags
+    the connective in 먹고 as EC but the particle in 친구하고 ("with a friend") as
+    JKB — identical spelling, opposite meaning. A spelling rule gets both wrong: it
+    splits 친구하고 갔어요 in the middle of a phrase, and misses 먹고 because the
+    token is short. Guarding by token length trades one error for the other.
+
+    Returns [text] unchanged when there is no clean joint."""
+    if not text or not text.strip():
+        return []
+    morphs = [m for m in analyzer.analyze(text) if m.start >= 0]
+    cuts: list[int] = []
+    for m in morphs:
+        if not m.tag.startswith("EC"):
+            continue
+        head, tail = text[:m.end].strip(), text[m.end:].strip()
+        # Don't strand a fragment on either side of the split.
+        if len(head) >= _MIN_CLAUSE_CHARS and len(tail) >= _MIN_CLAUSE_CHARS:
+            cuts.append(m.end)
+    if not cuts:
+        return [text]
+    clauses, prev = [], 0
+    for c in cuts:
+        clauses.append(text[prev:c].strip())
+        prev = c
+    clauses.append(text[prev:].strip())
+    return [c for c in clauses if c] or [text]
+
+
+def drillable_part(text: str) -> tuple[str, str]:
+    """Split a sentence into (lead-in, the clause worth producing).
+
+    The final clause carries the sentence's main predicate, so it is the piece that
+    makes a coherent production target; everything before it becomes context the
+    card can show without asking you to recall it.
+
+    A target needs a floor as well as a ceiling. Chains of three or four clauses
+    end on something like "왔어요" — grammatically a clause, but as a card it asks
+    you to produce a bare verb with every content word already given. Clauses are
+    merged back in until the target is a real utterance."""
+    clauses = split_clauses(text)
+    if len(clauses) < 2:
+        return "", text
+    take = 1
+    while take < len(clauses) and len(" ".join(clauses[-take:])) < _MIN_TARGET_CHARS:
+        take += 1
+    return " ".join(clauses[:-take]), " ".join(clauses[-take:])
+
+
 @dataclass
 class TargetPick:
     index: int           # index into the Whisper sentence list
@@ -386,12 +450,36 @@ def pick_targets(
         return []
     known = known or set()
     model = model or config.EXTRACTION_MODEL
-    n = min(n, len(sentences))
+
+    # Only offer sentences short enough to be worth drilling. The sentence-grouping
+    # caps are on DURATION, which is the wrong measure here: a fast speaker fits 62
+    # characters into 6.6s, so it clears every timing check and is still a mouthful
+    # to produce from memory. Filtering the candidate list rather than rejecting
+    # afterwards means the LLM never has to be told twice.
+    #
+    # Indices returned to the caller stay indices into the FULL list, because
+    # lead-up context is resolved from neighbours — a target may be long-winded
+    # while the line before it is exactly the context needed.
+    cap = config.AV_TARGET_MAX_CHARS
+    # Measure the clause that would actually be drilled, not the whole sentence.
+    # A two-clause line is long on the page but its target is one clause, so
+    # judging the sentence would reject exactly the connective grammar (-고, -지만,
+    # -는데) that is worth learning.
+    eligible = [i for i, s in enumerate(sentences)
+                if len(drillable_part(s)[1].strip()) <= cap]
+    if len(eligible) < n:
+        # A scene of long sentences would otherwise yield almost no targets. Take
+        # the shortest available instead, so a hard day still produces a full set.
+        eligible = sorted(range(len(sentences)), key=lambda i: len(sentences[i]))[:n]
+        eligible.sort()
+    subset = [sentences[i] for i in eligible]
+
+    n = min(n, len(subset))
     # over-request so we can drop fragments and still reach n good full sentences
-    n_request = min(len(sentences), n + 5)
+    n_request = min(len(subset), n + 5)
     data = provider.complete_json(
         system=TARGET_SYSTEM.replace("{n}", str(n_request)),
-        user=build_targets_prompt(sentences, list(known), n_request),
+        user=build_targets_prompt(subset, list(known), n_request),
         model=model, max_tokens=1600,
     )
     raw = data.get("targets") if isinstance(data, dict) else None
@@ -405,8 +493,11 @@ def pick_targets(
         ko = str(rt.get("ko", "")).strip()
         if not ko:
             continue
-        idx = _align_index(ko, int(rt.get("index", -1) or -1), sentences)
-        if idx < 0 or idx in seen:
+        sub_idx = _align_index(ko, int(rt.get("index", -1) or -1), subset)
+        if sub_idx < 0:
+            continue
+        idx = eligible[sub_idx]           # back to an index into the full list
+        if idx in seen:
             continue
         if not is_full_sentence(sentences[idx]):       # drop interjections/fragments
             continue
