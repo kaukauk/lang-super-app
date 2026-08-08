@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Cue } from "../lib/api";
 import { fmt } from "../lib/fmt";
+import SubtitleOverlay from "./SubtitleOverlay";
 
 type Block = { start_s: number; end_s: number; text: string };
 
@@ -134,14 +135,10 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
           onPause={() => setPlaying(false)}
         />
         {mode === "study" && active && (
-          <button
-            onClick={() => { vidRef.current?.pause(); onSaveCue?.(active.text); }}
-            className="group absolute bottom-12 left-1/2 max-w-[92%] -translate-x-1/2 rounded-lg bg-black/75 px-4 py-2 text-center text-xl font-medium leading-snug text-white hover:bg-indigo-700"
-            title="Click to save this as a card"
-          >
-            {active.text}
-            <span className="ml-2 hidden text-xs text-indigo-200 group-hover:inline">＋ save</span>
-          </button>
+          <SubtitleOverlay
+            text={active.text} full={full}
+            onSave={(t) => { vidRef.current?.pause(); onSaveCue?.(t); }}
+          />
         )}
 
         {/* Sits over the video so it is reachable in fullscreen too, where the

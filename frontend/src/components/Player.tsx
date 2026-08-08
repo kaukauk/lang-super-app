@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Cue } from "../lib/api";
 import { fmt } from "../lib/fmt";
+import SubtitleOverlay from "./SubtitleOverlay";
 
 let apiReady: Promise<void> | null = null;
 function loadYT(): Promise<void> {
@@ -160,14 +161,10 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onSav
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/30 to-transparent" />
         )}
         {mode === "study" && active && (
-          <button
-            onClick={() => { playerRef.current?.pauseVideo(); onSaveCue?.(active.text); }}
-            className="group absolute bottom-6 left-1/2 max-w-[92%] -translate-x-1/2 rounded-lg bg-black/75 px-4 py-2 text-center text-xl font-medium leading-snug text-white hover:bg-indigo-700"
-            title="Click to save this as a card"
-          >
-            {active.text}
-            <span className="ml-2 hidden text-xs text-indigo-200 group-hover:inline">＋ save</span>
-          </button>
+          <SubtitleOverlay
+            text={active.text} full={full}
+            onSave={(t) => { playerRef.current?.pauseVideo(); onSaveCue?.(t); }}
+          />
         )}
       </div>
 
