@@ -67,6 +67,15 @@ def analyze(text: str) -> list[Morph]:
     ]
 
 
+def conjugate_polite(stem: str, tag: str) -> str:
+    """Attach the 아요/어요 ending to a verb/adjective stem.
+
+    Kiwi's own conjugator, so the irregular classes it tagged on the way in are
+    honoured on the way out: 듣 + VV-I gives 들어요, not 듣어요. Keeping this next to
+    `analyze` means the tag never leaves the module that produced it."""
+    return _get_kiwi().join([(stem, tag), ("어요", "EF")])
+
+
 def lemmas(text: str) -> list[str]:
     return [m.lemma for m in analyze(text)]
 

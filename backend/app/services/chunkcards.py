@@ -153,6 +153,27 @@ def push_chunks(
     if not notes:
         return {"pushed": 0, "skipped": 0, "notes": []}
 
+    return push_notes(notes, anki=anki, tts_provider=tts_provider, deck=deck,
+                      model=model, make_audio=make_audio)
+
+
+def push_notes(
+    notes: list[ChunkNote], *, anki: Optional[AnkiConnectClient] = None,
+    tts_provider: Optional[tts.TTS] = None, deck: Optional[str] = None,
+    model: Optional[str] = None, make_audio: bool = True,
+) -> dict:
+    """Add already-built notes: ensure the deck/note type, TTS each one, push.
+
+    Split out of push_chunks so a single card born somewhere else — a word clicked
+    in a subtitle, say — lands in exactly the same deck, note type and audio
+    convention as a harvested chunk, rather than growing a parallel path that
+    drifts."""
+    deck = deck or config.ANKI_CHUNK_DECK
+    model = model or config.ANKI_CHUNK_MODEL
+    anki = anki or AnkiConnectClient()
+    if not notes:
+        return {"pushed": 0, "skipped": 0, "deck": deck, "notes": []}
+
     anki.ensure_deck(deck)
     anki.ensure_model(model, payload=build_model_payload(model))
 

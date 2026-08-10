@@ -20,7 +20,7 @@ from .anki.connect import AnkiConnectClient
 from .llm import OpenAIClient
 from .llm.fake import DemoLLM
 from .services import (anki_io, avcards, chunkcards, extraction, ingest, library,
-                       sparring, srs, transcribe, tts)
+                       sparring, srs, transcribe, tts, vocab)
 
 app = FastAPI(title="Korean Immersion App")
 
@@ -293,6 +293,49 @@ def anki_check() -> dict[str, Any]:
                 "decks": client.invoke("deckNames")}
     except Exception as exc:
         raise HTTPException(503, str(exc))
+
+
+class AnnotateBody(BaseModel):
+    texts: list[str]
+    deck: str = "Korean"
+    # Off skips the LLM entirely: colours and 아요/어요 forms still come back, only
+    # the glosses for words the deck has never seen are missing.
+    translate: bool = True
+
+
+@app.post("/api/annotate")
+def annotate(body: AnnotateBody) -> dict[str, Any]:
+    """Word-level annotation of subtitle lines — what to highlight, and how."""
+    llm = None
+    if body.translate:
+        # No key configured is not a reason to fail the request: the colours and the
+        # deck's own glosses are the useful half and neither needs a model.
+        try:
+            llm = provider()
+        except Exception:
+            llm = None
+    lines = vocab.annotate(body.texts, provider=llm, deck=body.deck,
+                           translate=body.translate)
+    return {"lines": vocab.as_dicts(lines)}
+
+
+class VocabAddBody(BaseModel):
+    word: str
+    context_ko: str
+    gloss_en: str = ""
+    pos: str = ""
+    display: str = ""
+
+
+@app.post("/api/vocab/add")
+def vocab_add(body: VocabAddBody) -> dict[str, Any]:
+    """Add one clicked subtitle word to Anki."""
+    try:
+        return vocab.add_to_anki(word=body.word, context_ko=body.context_ko,
+                                 gloss_en=body.gloss_en, pos=body.pos,
+                                 display=body.display, tts_provider=tts_provider())
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.post("/api/segments/{segment_id}/extract")

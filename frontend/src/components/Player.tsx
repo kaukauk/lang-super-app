@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Cue } from "../lib/api";
+import type { Cue, VocabToken } from "../lib/api";
 import { fmt } from "../lib/fmt";
+import { useAnnotations } from "../lib/useAnnotations";
 import SubtitleOverlay from "./SubtitleOverlay";
 
 let apiReady: Promise<void> | null = null;
@@ -47,10 +48,10 @@ type Props = {
   endS: number;
   mode: "blind" | "study";
   cues?: Cue[];
-  onSaveCue?: (text: string) => void;
+  onAddWord?: (token: VocabToken, line: string) => Promise<unknown>;
 };
 
-export default function Player({ youtubeId, startS, endS, mode, cues = [], onSaveCue }: Props) {
+export default function Player({ youtubeId, startS, endS, mode, cues = [], onAddWord }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -98,6 +99,10 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onSav
   );
   const sentences = useMemo(() => groupIntoSentences(cues), [cues]);
   const items = unit === "line" ? lineBlocks : sentences;
+  // Annotated up front for the whole day, so a word is already live the moment its
+  // line appears. Study mode only — blind mode shows no subtitles to hover.
+  const texts = useMemo(() => items.map((b) => b.text), [items]);
+  const annotations = useAnnotations(texts, mode === "study");
   // +offset = subtitles appear later; -offset = earlier.
   const t = time - offset;
   // Show the most recently STARTED caption and switch the instant the next one
@@ -163,7 +168,8 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onSav
         {mode === "study" && active && (
           <SubtitleOverlay
             text={active.text} full={full}
-            onSave={(t) => { playerRef.current?.pauseVideo(); onSaveCue?.(t); }}
+            tokens={annotations[active.text]}
+            onAdd={onAddWord}
           />
         )}
       </div>

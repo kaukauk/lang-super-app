@@ -34,6 +34,14 @@ def cache_path() -> Path:
     return Path(config.MEDIA_CACHE_DIR) / "known_forms.json"
 
 
+def strip_field(text: str) -> str:
+    """A field value as plain text: no media tags, no HTML, no entities."""
+    text = re.sub(r"\[sound:[^\]]*\]", " ", text or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;?", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _forms_from_note(info: dict[str, Any]) -> set[str]:
     """Every Korean-bearing field value on a note.
 
@@ -42,11 +50,7 @@ def _forms_from_note(info: dict[str, Any]) -> set[str]:
     per-model map that silently misses any note type added later."""
     out: set[str] = set()
     for value in (info.get("fields") or {}).values():
-        text = (value or {}).get("value", "")
-        # strip media tags and any HTML the note carries
-        text = re.sub(r"\[sound:[^\]]*\]", " ", text)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"&nbsp;?", " ", text).strip()
+        text = strip_field((value or {}).get("value", ""))
         if _is_korean_form(text):
             out.add(text)
     return out
@@ -79,6 +83,40 @@ def fetch_from_anki(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] =
         for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
             forms |= _forms_from_note(info)
     return {f for f in forms if f}
+
+
+def note_entries(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] = None,
+                 ) -> list[dict[str, Any]]:
+    """Each note as its Korean forms plus the English side, for glossing.
+
+    Same read as fetch_from_anki, but keeping the pairing: showing a word's meaning
+    the way the learner's OWN deck words it beats a fresh translation, because it is
+    the wording they have already been reviewing against."""
+    anki = anki or AnkiConnectClient()
+    note_ids = anki.invoke("findNotes", query=f'deck:"{deck}"') or []
+    out: list[dict[str, Any]] = []
+    for i in range(0, len(note_ids), _BATCH):
+        for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
+            forms = _forms_from_note(info)
+            if forms:
+                out.append({"forms": forms, "gloss": _english_from_note(info)})
+    return out
+
+
+def _english_from_note(info: dict[str, Any]) -> str:
+    """The shortest field value that is not itself Korean — the gloss.
+
+    Selected by content, not by field name, for the same reason the Korean side is:
+    Back, Meaning, Definition and English all appear across the collection's note
+    types, and a name-based map would silently return nothing for the next one."""
+    best = ""
+    for value in (info.get("fields") or {}).values():
+        text = strip_field((value or {}).get("value", ""))
+        if not text or len(text) > 200 or _is_korean_form(text):
+            continue
+        if not best or len(text) < len(best):
+            best = text
+    return best
 
 
 def save_cache(forms: set[str], deck: str) -> None:

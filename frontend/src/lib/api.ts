@@ -26,6 +26,15 @@ export type LibrarySeries = {
   continue: LibraryEpisode | null;
 };
 export type LibraryOverview = { series: LibrarySeries[]; videos: LibraryEpisode[] };
+// One highlightable word inside a subtitle line. `start`/`end` index into the
+// line's characters, so the renderer can colour the word in place without
+// re-tokenising anything in the browser.
+export type VocabToken = {
+  start: number; end: number; surface: string; word: string; lemma: string;
+  pos: string; display: string; gloss_en: string;
+  status: "known" | "derived" | "new";
+};
+export type AnnotatedLine = { text: string; tokens: VocabToken[] };
 export type Chunk = { type: string; ko: string; en: string; gloss: string };
 export type Extraction = {
   primer_md: string; counts: Record<string, number>; warnings: string[]; chunks: Chunk[];
@@ -140,4 +149,9 @@ export const api = {
     req<{ segment_id: number; done: boolean }>(`/segments/${sid}/done?done=${done}`,
       { method: "POST" }),
   ankiCheck: () => req<{ ok: boolean; url: string; version: number; decks: string[] }>("/anki/check"),
+  annotate: (texts: string[]) =>
+    req<{ lines: AnnotatedLine[] }>("/annotate", post({ texts })),
+  addVocab: (body: { word: string; context_ko: string; gloss_en?: string;
+                     pos?: string; display?: string }) =>
+    req<{ pushed: number; skipped: number; deck: string }>("/vocab/add", post(body)),
 };

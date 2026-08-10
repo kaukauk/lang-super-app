@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Cue } from "../lib/api";
+import type { Cue, VocabToken } from "../lib/api";
 import { fmt } from "../lib/fmt";
+import { useAnnotations } from "../lib/useAnnotations";
 import SubtitleOverlay from "./SubtitleOverlay";
 
 type Block = { start_s: number; end_s: number; text: string };
@@ -31,7 +32,7 @@ type Props = {
   baseS: number;        // what absolute time video-time 0 corresponds to
   mode: "blind" | "study";
   cues?: Cue[];
-  onSaveCue?: (text: string) => void;
+  onAddWord?: (token: VocabToken, line: string) => Promise<unknown>;
   // Whole-episode playback: seek here on load and stop there, instead of cutting
   // a per-day snippet first. A joined episode is one file on disk, so a day can be
   // watched the moment it is imported rather than after a build step.
@@ -41,7 +42,7 @@ type Props = {
 
 // Plays the locally-cut ~5-min snippet (frame-accurate, no scrubbing in blind mode)
 // with a Korean-subtitle overlay synced from the segment's cues.
-export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
+export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
                                       seekTo, stopAt }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -62,6 +63,10 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
     [cues, baseS],
   );
   const items = unit === "line" ? lineBlocks : sentences;
+  // Annotated up front for the whole day, so a word is already live the moment its
+  // line appears. Study mode only — blind mode shows no subtitles to hover.
+  const texts = useMemo(() => items.map((b) => b.text), [items]);
+  const annotations = useAnnotations(texts, mode === "study");
   const t = time - offset;
   const active = useMemo<Block | undefined>(() => {
     let idx = -1;
@@ -137,7 +142,8 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onSaveCue,
         {mode === "study" && active && (
           <SubtitleOverlay
             text={active.text} full={full}
-            onSave={(t) => { vidRef.current?.pause(); onSaveCue?.(t); }}
+            tokens={annotations[active.text]}
+            onAdd={onAddWord}
           />
         )}
 

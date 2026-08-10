@@ -153,6 +153,11 @@ class ChunkNote:
     blank_on: str = ""          # the clicked word, for lookup-derived cards
     context_ko: str = ""        # the sparring line this answered — cues from meaning
     gloss_en: str = ""          # ONLY for chunks born from a click-to-gloss lookup
+    # The conjugated form the anchor became, when the caller already knows it.
+    # A word clicked in a subtitle IS the target — no need to locate it by prefix,
+    # and the prefix search cannot find it anyway when the anchor and the form on
+    # screen diverge after one syllable (먹어요 -> 먹었어요).
+    target_ko: str = ""
     audio_file: str = ""        # TTS of the full chunk, in collection.media
     tags: list[str] = field(default_factory=list)
 
@@ -169,6 +174,8 @@ class ChunkNote:
         learner never heard, and the template hides the whole row without it."""
         if not self.anchor:
             return ""
+        if self.target_ko:
+            return self.target_ko
         return predicate_span(self.chunk_ko, self.anchor) or self.chunk_ko
 
     def fields(self) -> dict[str, str]:
