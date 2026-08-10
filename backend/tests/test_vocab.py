@@ -130,6 +130,46 @@ def test_a_mined_cloze_makes_its_own_word_known() -> None:
     vocab.invalidate_index()
 
 
+def test_only_cards_actually_studied_count_as_known() -> None:
+    """A card sitting unstudied in the new queue is not knowledge. Colouring a word
+    green because a card exists somewhere would describe the collection rather than
+    the learner — on this collection that is 6,459 notes against 248."""
+    seen: list[str] = []
+
+    class Recording(FakeTransport):
+        def __call__(self, req):
+            if req.get("action") == "findNotes":
+                seen.append(req["params"]["query"])
+            return super().__call__(req)
+
+    anki = AnkiConnectClient(transport=Recording({"findNotes": [], "notesInfo": []}))
+    vocab.build_index("Korean", anki=anki)
+    assert seen == ['deck:"Korean" -is:new']
+
+
+def test_a_video_starting_re_reads_anki() -> None:
+    """Reviews done since the last video have to show up the moment this one starts,
+    and the index is otherwise trusted for five minutes."""
+    builds = 0
+
+    def counting(*a, **kw):
+        nonlocal builds
+        builds += 1
+        return {"forms": {}, "lemmas": {}}
+
+    real, vocab.build_index = vocab.build_index, counting
+    try:
+        vocab.invalidate_index()
+        vocab.anki_index("Korean")
+        vocab.anki_index("Korean")               # inside the TTL: cached
+        assert builds == 1
+        vocab.anki_index("Korean", refresh=True)  # a video starting: re-read
+        assert builds == 2
+    finally:
+        vocab.build_index = real
+        vocab.invalidate_index()
+
+
 def test_anki_being_down_still_returns_words() -> None:
     """This runs while the learner is watching — a dead AnkiConnect must cost the
     colours, not the overlay."""

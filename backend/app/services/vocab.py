@@ -74,14 +74,14 @@ _index_cache: dict[str, Any] = {"at": 0.0, "deck": "", "value": None}
 
 
 def build_index(deck: str = "Korean", *, anki=None) -> dict[str, Any]:
-    """form -> gloss and lemma -> gloss, over every note in the deck.
+    """form -> gloss and lemma -> gloss, over every note the learner has studied.
 
     The lemma map is built ONLY from single-word notes. A note whose Korean side is
     a whole sentence would otherwise attach its gloss to every content word in it,
     and "물" would end up glossed with a sentence about water."""
     forms_to_gloss: dict[str, str] = {}
     lemma_to_gloss: dict[str, str] = {}
-    for note in known.note_entries(deck, anki=anki):
+    for note in known.note_entries(deck, anki=anki, seen_only=True):
         gloss = note["gloss"]
         for form in note["forms"]:
             forms_to_gloss.setdefault(form, gloss)
@@ -266,7 +266,8 @@ def fetch_glosses(items: list[tuple[str, str]], *, provider: LLMProvider,
 # --- the whole job -------------------------------------------------------
 
 def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
-             deck: str = "Korean", translate: bool = True, anki=None) -> list[Line]:
+             deck: str = "Korean", translate: bool = True, anki=None,
+             refresh: bool = False) -> list[Line]:
     """Annotate subtitle lines: tokens, Anki status, glosses.
 
     Takes many lines at once on purpose. Everything expensive here is per-BATCH
@@ -280,7 +281,7 @@ def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
     lines = [Line(text=t, tokens=tokenize(t)) for t in texts]
 
     try:
-        index = anki_index(deck, anki=anki)
+        index = anki_index(deck, anki=anki, refresh=refresh)
     except Exception:
         index = {"forms": {}, "lemmas": {}}
     forms, lemma_glosses = index["forms"], index["lemmas"]

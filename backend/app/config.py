@@ -142,6 +142,17 @@ ANKI_CHUNK_MODEL = os.environ.get("LANGAPP_ANKI_CHUNK_MODEL", "KoreanChunk")
 # split moves over time says something about whether the show is at the right
 # level. Under Korean:: deliberately: the known-vocabulary check reads deck:"Korean"
 # and its subdecks, so a word mined today counts as known tomorrow.
+# What "known" means when colouring subtitle words: cards you have actually sat in
+# front of, not cards that merely exist in the collection. An Anki search fragment
+# ANDed onto the deck query; set empty to count the whole deck.
+#
+# Scoped to the subtitle overlay on purpose, and NOT to the avoid-list that
+# extraction and sparring use. They answer different questions. "Should I teach
+# this word?" is about whether a card already exists, since making a second one is
+# a duplicate. "Do I know this word while watching?" is about whether the card has
+# ever come up in review. On this collection the two answers differ by 6,459 notes
+# against 248, so conflating them would silently rewrite what sparring drills.
+ANKI_SEEN_FILTER = os.environ.get("LANGAPP_ANKI_SEEN_FILTER", "-is:new")
 ANKI_MINED_DECK = os.environ.get("LANGAPP_ANKI_MINED_DECK", "Korean::Video Mined")
 ANKI_MINED_CLOZE_DECK = os.environ.get(
     "LANGAPP_ANKI_MINED_CLOZE_DECK", f"{ANKI_MINED_DECK}::Cloze")

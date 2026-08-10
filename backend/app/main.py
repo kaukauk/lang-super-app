@@ -324,6 +324,10 @@ class AnnotateBody(BaseModel):
     # Off skips the LLM entirely: colours and 아요/어요 forms still come back, only
     # the glosses for words the deck has never seen are missing.
     translate: bool = True
+    # Re-read Anki instead of trusting the cached index. The player sets this on the
+    # first request of a session, so starting a video always reflects reviews done
+    # since the last one.
+    refresh: bool = False
 
 
 @app.post("/api/annotate")
@@ -338,7 +342,7 @@ def annotate(body: AnnotateBody) -> dict[str, Any]:
         except Exception:
             llm = None
     lines = vocab.annotate(body.texts, provider=llm, deck=body.deck,
-                           translate=body.translate)
+                           translate=body.translate, refresh=body.refresh)
     return {"lines": vocab.as_dicts(lines)}
 
 

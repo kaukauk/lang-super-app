@@ -13,6 +13,11 @@ import { api, type VocabToken } from "./api";
 export function useAnnotations(texts: string[], enabled = true) {
   const [byText, setByText] = useState<Record<string, VocabToken[]>>({});
   const asked = useRef<Set<string>>(new Set());
+  // Re-read Anki once per player, on the first batch. Reviews done since the last
+  // video should be reflected the moment this one starts — a word studied this
+  // morning ought to be green this evening — and the server otherwise trusts a
+  // cached index for five minutes.
+  const firstFetch = useRef(true);
 
   useEffect(() => {
     if (!enabled) return;
@@ -21,8 +26,10 @@ export function useAnnotations(texts: string[], enabled = true) {
     // Marked before the request, not after: this effect re-runs when the results
     // land, and without it the same lines would be requested again.
     missing.forEach((t) => asked.current.add(t));
+    const refresh = firstFetch.current;
+    firstFetch.current = false;
     let live = true;
-    api.annotate(missing)
+    api.annotate(missing, refresh)
       .then((r) => {
         if (!live) return;
         setByText((m) => {

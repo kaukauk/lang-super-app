@@ -157,8 +157,8 @@ export const api = {
     req<{ segment_id: number; done: boolean }>(`/segments/${sid}/done?done=${done}`,
       { method: "POST" }),
   ankiCheck: () => req<{ ok: boolean; url: string; version: number; decks: string[] }>("/anki/check"),
-  annotate: (texts: string[]) =>
-    req<{ lines: AnnotatedLine[] }>("/annotate", post({ texts })),
+  annotate: (texts: string[], refresh = false) =>
+    req<{ lines: AnnotatedLine[] }>("/annotate", post({ texts, refresh })),
   addVocab: (body: { word: string; context_ko: string; gloss_en?: string;
                      pos?: string; display?: string; start?: number }) =>
     req<{ pushed: number; skipped: number; deck: string;

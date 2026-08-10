@@ -99,14 +99,22 @@ def fetch_from_anki(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] =
 
 
 def note_entries(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] = None,
-                 ) -> list[dict[str, Any]]:
+                 seen_only: bool = False) -> list[dict[str, Any]]:
     """Each note as its Korean forms plus the English side, for glossing.
 
     Same read as fetch_from_anki, but keeping the pairing: showing a word's meaning
     the way the learner's OWN deck words it beats a fresh translation, because it is
-    the wording they have already been reviewing against."""
+    the wording they have already been reviewing against.
+
+    `seen_only` narrows it to cards that have actually come up in review. A card
+    sitting unstudied in the new queue is not knowledge — colouring a word green
+    because a card for it exists somewhere would make the overlay describe the
+    collection rather than the learner."""
     anki = anki or AnkiConnectClient()
-    note_ids = anki.invoke("findNotes", query=f'deck:"{deck}"') or []
+    query = f'deck:"{deck}"'
+    if seen_only and config.ANKI_SEEN_FILTER:
+        query = f"{query} {config.ANKI_SEEN_FILTER}"
+    note_ids = anki.invoke("findNotes", query=query) or []
     out: list[dict[str, Any]] = []
     for i in range(0, len(note_ids), _BATCH):
         for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
