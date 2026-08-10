@@ -135,3 +135,15 @@ ANKI_MODEL = os.environ.get("LANGAPP_ANKI_MODEL", "KoreanImmersion")
 # assembly layer none of them has. Korean-only production cards (anki/chunks.py).
 ANKI_CHUNK_DECK = os.environ.get("LANGAPP_ANKI_CHUNK_DECK", "Korean::Chunks")
 ANKI_CHUNK_MODEL = os.environ.get("LANGAPP_ANKI_CHUNK_MODEL", "KoreanChunk")
+# Words mined from subtitles, split by what kind of card the line supported: a
+# cloze over the sentence, or the word on its own when the sentence was too hard to
+# be a prompt. Separate subdecks because they are different work — one is
+# production in context, the other is recognition — and because seeing how the
+# split moves over time says something about whether the show is at the right
+# level. Under Korean:: deliberately: the known-vocabulary check reads deck:"Korean"
+# and its subdecks, so a word mined today counts as known tomorrow.
+ANKI_MINED_DECK = os.environ.get("LANGAPP_ANKI_MINED_DECK", "Korean::Video Mined")
+ANKI_MINED_CLOZE_DECK = os.environ.get(
+    "LANGAPP_ANKI_MINED_CLOZE_DECK", f"{ANKI_MINED_DECK}::Cloze")
+ANKI_MINED_WORD_DECK = os.environ.get(
+    "LANGAPP_ANKI_MINED_WORD_DECK", f"{ANKI_MINED_DECK}::Standalone")

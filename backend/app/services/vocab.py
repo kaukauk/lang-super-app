@@ -403,6 +403,11 @@ def add_to_anki(*, word: str, context_ko: str, gloss_en: str = "", pos: str = ""
                          target_ko=word if predicate else "",
                          tags=tags)
 
+    # Routed by shape rather than all into one deck: a cloze in context and a bare
+    # word are different reviews, and keeping them apart lets either be tuned or
+    # suspended without touching the other.
+    deck = deck or (config.ANKI_MINED_WORD_DECK if blockers
+                    else config.ANKI_MINED_CLOZE_DECK)
     out = chunkcards.push_notes([note], anki=anki, tts_provider=tts_provider, deck=deck)
     out["shape"] = "isolated" if blockers else "cloze"
     out["blocked_by"] = blockers

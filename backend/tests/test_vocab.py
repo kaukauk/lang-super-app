@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app import config
 from app.anki.connect import AnkiConnectClient, FakeTransport
 from app.services import vocab
 
@@ -212,6 +213,21 @@ def test_an_isolated_verb_asks_for_its_polite_form() -> None:
     note = out["notes"][0]
     assert note["Prompt"] == "일으켰고"
     assert note["Anchor"] == "일으켰고" and note["Target"] == "일으켜요"
+
+
+def test_the_two_shapes_go_to_different_decks() -> None:
+    """Different reviews, so either can be tuned or suspended without the other —
+    and both under Korean::, so a word mined today counts as known tomorrow."""
+    cloze = vocab.add_to_anki(word="먹었어요", context_ko="밥을 먹었어요", pos="verb",
+                              display="먹어요", start=3, anki=_known("밥"),
+                              tts_provider=_NoTTS())
+    word = vocab.add_to_anki(word="제국이", context_ko="제국이 전쟁을 일으켰고", start=0,
+                             pos="noun", display="제국", anki=fake_anki([]),
+                             tts_provider=_NoTTS())
+    assert cloze["deck"] == config.ANKI_MINED_CLOZE_DECK
+    assert word["deck"] == config.ANKI_MINED_WORD_DECK
+    assert cloze["deck"] != word["deck"]
+    assert all(d.startswith("Korean::") for d in (cloze["deck"], word["deck"]))
 
 
 def test_a_readable_line_still_gets_the_cloze() -> None:
