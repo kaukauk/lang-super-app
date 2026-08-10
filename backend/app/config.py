@@ -153,6 +153,10 @@ ANKI_CHUNK_MODEL = os.environ.get("LANGAPP_ANKI_CHUNK_MODEL", "KoreanChunk")
 # ever come up in review. On this collection the two answers differ by 6,459 notes
 # against 248, so conflating them would silently rewrite what sparring drills.
 ANKI_SEEN_FILTER = os.environ.get("LANGAPP_ANKI_SEEN_FILTER", "-is:new")
+# Resolve homographs against the line before trusting the deck's meaning (배 is
+# pear, boat and stomach). The only part of annotation that costs extra model
+# calls; set to 0 to take the deck's gloss at face value.
+SENSE_CHECK = os.environ.get("LANGAPP_SENSE_CHECK", "1") not in ("0", "false", "")
 ANKI_MINED_DECK = os.environ.get("LANGAPP_ANKI_MINED_DECK", "Korean::Video Mined")
 ANKI_MINED_CLOZE_DECK = os.environ.get(
     "LANGAPP_ANKI_MINED_CLOZE_DECK", f"{ANKI_MINED_DECK}::Cloze")

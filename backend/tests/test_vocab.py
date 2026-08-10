@@ -186,22 +186,109 @@ def test_anki_being_down_still_returns_words() -> None:
 
 # --- glossing ------------------------------------------------------------
 
+class Calls:
+    """Records what the model was asked, split by which question it was."""
+
+    def __init__(self, **answers):
+        self.answers = answers
+        self.gloss: list[str] = []
+        self.polysemy: list[str] = []
+        self.sense: list[str] = []
+
+    def complete_json(self, *, system, user, model, **kw):
+        if system is vocab.GLOSS_SYSTEM:
+            self.gloss.append(user)
+            return {"glosses": self.answers.get("glosses", {})}
+        if system is vocab.POLYSEMY_SYSTEM:
+            self.polysemy.append(user)
+            return {"senses": self.answers.get("senses", {})}
+        self.sense.append(user)
+        return {"items": self.answers.get("items", [])}
+
+
 def test_the_model_is_asked_only_for_words_the_deck_cannot_answer() -> None:
-    asked: list[str] = []
-
-    class LLM:
-        def complete_json(self, *, system, user, model, **kw):
-            asked.append(user)
-            return {"glosses": {"제국": "empire"}}
-
+    llm = Calls(glosses={"제국": "empire"})
     anki = fake_anki([{"Front": "물", "Back": "water"}])
     vocab.invalidate_index()
-    lines = vocab.annotate(["물과 제국"], provider=LLM(), anki=anki)
-    assert len(asked) == 1
-    items = [line.split("  (in:")[0] for line in asked[0].splitlines()]
+    lines = vocab.annotate(["물과 제국"], provider=llm, anki=anki)
+    assert len(llm.gloss) == 1
+    items = [line.split("  (in:")[0] for line in llm.gloss[0].splitlines()]
     assert items == ["제국"]              # 물 is answered by the deck, for free
     assert lines[0].tokens[-1].gloss_en == "empire"
     vocab.invalidate_index()
+
+
+# --- homographs ----------------------------------------------------------
+
+def test_a_single_sense_word_is_never_asked_about_twice() -> None:
+    """Polysemy is a property of the word, not the line, so the answer is cached
+    forever — otherwise every known word on screen would cost a call per episode."""
+    anki = fake_anki([{"Front": "물", "Back": "water"}])
+    llm = Calls(senses={"물": []})
+    vocab.invalidate_index()
+    vocab.annotate(["물을 마셔요"], provider=llm, anki=anki)
+    assert llm.polysemy and "물" in llm.polysemy[0]
+    assert llm.sense == []                 # single-sense: never costs a per-line call
+    llm2 = Calls(senses={})
+    vocab.annotate(["물이 좋아요"], provider=llm2, anki=anki)
+    assert all("물" not in u for u in llm2.polysemy)
+    vocab.invalidate_index()
+
+
+def test_a_word_meaning_something_else_here_is_not_known() -> None:
+    """The case this exists for: the deck taught 배 as pear, the line means boat.
+    Calling that green tells the learner they know something they do not."""
+    anki = fake_anki([{"Front": "배", "Back": "pear"}])
+    llm = Calls(senses={"배": ["pear", "boat", "stomach"]},
+                items=[{"i": 0, "sense": "boat", "deck_index": -1}])
+    vocab.invalidate_index()
+    tok = vocab.annotate(["배를 탔어요"], provider=llm, anki=anki)[0].tokens[0]
+    assert tok.status == "new"
+    assert tok.gloss_en == "boat"
+    assert "pear" in tok.note and "boat" in tok.note
+    vocab.invalidate_index()
+
+
+def test_the_taught_sense_fitting_keeps_the_word_known() -> None:
+    anki = fake_anki([{"Front": "배", "Back": "pear"}])
+    llm = Calls(senses={"배": ["pear", "boat"]},
+                items=[{"i": 0, "sense": "pear", "deck_index": 0}])
+    vocab.invalidate_index()
+    tok = vocab.annotate(["배를 먹었어요"], provider=llm, anki=anki)[0].tokens[0]
+    assert tok.status == "known" and tok.gloss_en == "pear" and tok.note == ""
+    vocab.invalidate_index()
+
+
+def test_the_resolved_sense_survives_into_the_card_decision() -> None:
+    """add_to_anki re-annotates without a model. Without the per-line cache it would
+    see 배 as known and build a cloze the learner cannot read."""
+    anki = fake_anki([{"Front": "배", "Back": "pear"}])
+    llm = Calls(senses={"배": ["pear", "boat"]},
+                items=[{"i": 0, "sense": "boat", "deck_index": -1}])
+    vocab.invalidate_index()
+    vocab.annotate(["배를 탔어요"], provider=llm, anki=anki)
+    tok = vocab.annotate(["배를 탔어요"], translate=False, anki=anki)[0].tokens[0]
+    assert tok.status == "new" and tok.gloss_en == "boat"
+    vocab.invalidate_index()
+
+
+def test_an_unknown_polysemous_word_is_glossed_per_line() -> None:
+    """Glosses are cached by lemma across every video, so without a sense pass 배
+    keeps whichever meaning it happened to carry the first time it was ever seen."""
+    llm = Calls(glosses={"배": "stomach"}, senses={"배": ["pear", "boat", "stomach"]},
+                items=[{"i": 0, "sense": "pear", "deck_index": -1}])
+    vocab.invalidate_index()
+    tok = vocab.annotate(["배를 먹었어요"], provider=llm, anki=fake_anki([]))[0].tokens[0]
+    assert tok.gloss_en == "pear" and tok.status == "new"
+    vocab.invalidate_index()
+
+
+def test_every_gloss_a_form_carries_is_kept() -> None:
+    """Keeping only the first would decide arbitrarily which meaning counts as
+    known, and hide the ambiguity from the sense check entirely."""
+    anki = fake_anki([{"Front": "배", "Back": "pear"}, {"Front": "배", "Back": "boat"}])
+    index = vocab.build_index(anki=anki)
+    assert sorted(index["forms"]["배"]) == ["boat", "pear"]
 
 
 def test_a_model_failure_is_not_fatal() -> None:

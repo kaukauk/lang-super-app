@@ -27,6 +27,7 @@ from ..anki.connect import AnkiConnectClient
 
 _HANGUL = re.compile(r"[가-힣]")
 _BOLD = re.compile(r"<b>(.*?)</b>", re.IGNORECASE | re.DOTALL)
+_LATIN = re.compile(r"[A-Za-z]")
 # notesInfo on a few thousand notes is a large payload; ask in slices.
 _BATCH = 500
 
@@ -145,11 +146,21 @@ def _english_from_note(info: dict[str, Any]) -> str:
     best = ""
     for value in (info.get("fields") or {}).values():
         text = strip_field((value or {}).get("value", ""))
-        if not text or len(text) > 200 or _is_korean_form(text):
+        if not text or len(text) > 200 or _is_korean_form(text) or _is_notation(text):
             continue
         if not best or len(text) < len(best):
             best = text
     return best
+
+
+def _is_notation(text: str) -> bool:
+    """Grammar notation like -(으)ㄹ까요? or 을/를, which is not a gloss.
+
+    It slips past the Korean check because bare jamo (ㄹ) and brackets dilute the
+    Hangul ratio, and it was then being shown as a word's meaning — the KBA pattern
+    decks put the pattern in a field of its own, so 하다 was glossed "-(으)ㄹ까요?"
+    rather than "do". English is the distinguishing feature: notation has none."""
+    return len(_LATIN.findall(text)) < 2
 
 
 def save_cache(forms: set[str], deck: str, seen_only: bool = False) -> None:

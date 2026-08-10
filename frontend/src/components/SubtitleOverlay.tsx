@@ -232,6 +232,14 @@ function Word({ token, active, pending, added, error, clickable,
               : pending ? "adding…"
               : `${TONE_NOTE[token.status]}${clickable ? " · click to add" : ""}`}
           </span>
+          {/* A homograph the deck taught with a different meaning. Worth saying out
+              loud: the learner would otherwise recall the wrong word and be sure of
+              it, which is harder to undo than not knowing it at all. */}
+          {token.note && !added && (
+            <span className="block max-w-[16em] whitespace-normal text-[0.8em] text-amber-300/90">
+              {token.note}
+            </span>
+          )}
         </span>
       )}
       <span

@@ -60,6 +60,10 @@ class Token:
     display: str            # 아요/어요 form for predicates, else the plain word
     gloss_en: str = ""
     status: str = "new"     # known (exact card) | derived (same word, other form) | new
+    # Every meaning the deck teaches for this word, and — when the word turned out
+    # to mean something else here — a line saying so.
+    deck_senses: list[str] = field(default_factory=list)
+    note: str = ""
 
 
 @dataclass
@@ -74,20 +78,30 @@ _index_cache: dict[str, Any] = {"at": 0.0, "deck": "", "value": None}
 
 
 def build_index(deck: str = "Korean", *, anki=None) -> dict[str, Any]:
-    """form -> gloss and lemma -> gloss, over every note the learner has studied.
+    """form -> glosses and lemma -> glosses, over every note the learner has studied.
+
+    Every gloss, not the first one found. A form can carry several meanings across
+    several cards, and keeping only one would decide silently and arbitrarily which
+    of them the learner is deemed to know.
 
     The lemma map is built ONLY from single-word notes. A note whose Korean side is
     a whole sentence would otherwise attach its gloss to every content word in it,
     and "물" would end up glossed with a sentence about water."""
-    forms_to_gloss: dict[str, str] = {}
-    lemma_to_gloss: dict[str, str] = {}
+    forms_to_gloss: dict[str, list[str]] = {}
+    lemma_to_gloss: dict[str, list[str]] = {}
+
+    def add(table: dict[str, list[str]], key: str, gloss: str) -> None:
+        seen = table.setdefault(key, [])
+        if gloss and gloss not in seen:
+            seen.append(gloss)
+
     for note in known.note_entries(deck, anki=anki, seen_only=True):
         gloss = note["gloss"]
         for form in note["forms"]:
-            forms_to_gloss.setdefault(form, gloss)
+            add(forms_to_gloss, form, gloss)
             lemmas = analyzer.content_lemmas(form)
             if len(set(lemmas)) == 1:
-                lemma_to_gloss.setdefault(lemmas[0], gloss)
+                add(lemma_to_gloss, lemmas[0], gloss)
     return {"forms": forms_to_gloss, "lemmas": lemma_to_gloss}
 
 
@@ -263,6 +277,190 @@ def fetch_glosses(items: list[tuple[str, str]], *, provider: LLMProvider,
     return out
 
 
+# --- homographs ----------------------------------------------------------
+#
+# 배 is pear, boat and stomach. If the deck taught pear and the line means boat,
+# calling the word green is worse than calling it new: it tells the learner they
+# know something they do not, and it lets the word count as a readable neighbour
+# when deciding whether a line can carry a cloze.
+#
+# Resolving that needs the sentence, which means the model, which means it cannot
+# be asked for every word on screen. So it is two steps, and the expensive half is
+# skipped for the overwhelming majority of words:
+#
+#   1. Is this word polysemous at all? A property of the WORD, so the answer is
+#      cached forever and shared across every video.
+#   2. For the few that are, which sense is it here, and is that a sense the deck
+#      taught? Cached per (word, line), so re-annotating a line is free.
+
+POLYSEMY_SYSTEM = (
+    "For each Korean dictionary form, list the distinct common meanings an "
+    "English-speaking learner would have to tell apart — 배 is pear, boat and "
+    "stomach, so it gets three; 물 is only water, so it gets none.\n"
+    'Return ONLY JSON: {"senses": {"<item>": ["meaning", "meaning"]}} with one '
+    "entry per item given. Use an EMPTY LIST for any word with a single common "
+    "meaning. Do not list shades of one meaning, only genuinely different ones. "
+    "No markdown."
+)
+
+SENSE_SYSTEM = (
+    "Each item is a Korean word as used in one line of dialogue, plus the meanings "
+    "the learner's flashcards teach for that word. Decide what the word means HERE, "
+    "and whether that is one of the meanings they have been taught.\n"
+    'Return ONLY JSON: {"items": [{"i": <the item number>, "sense": "<a few words '
+    'of English — the meaning in this line>", "deck_index": <0-based index into '
+    "that item's taught list, or -1 if none of them mean this>}]}. One entry per "
+    "item. No markdown."
+)
+
+
+def _sense_cache_path() -> Path:
+    return Path(config.MEDIA_CACHE_DIR) / "sense_cache.json"
+
+
+def load_sense_cache() -> dict[str, Any]:
+    p = _sense_cache_path()
+    if not p.exists():
+        return {"poly": {}, "ctx": {}}
+    try:
+        data = json.loads(p.read_text("utf-8"))
+    except ValueError:
+        return {"poly": {}, "ctx": {}}
+    return {"poly": dict(data.get("poly") or {}), "ctx": dict(data.get("ctx") or {})}
+
+
+def save_sense_cache(cache: dict[str, Any]) -> None:
+    p = _sense_cache_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cache, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+
+def fetch_polysemy(lemmas: list[str], *, provider: LLMProvider,
+                   model: Optional[str] = None) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for i in range(0, len(lemmas), _MAX_GLOSS_BATCH):
+        batch = lemmas[i:i + _MAX_GLOSS_BATCH]
+        data = provider.complete_json(
+            system=POLYSEMY_SYSTEM, user="\n".join(batch),
+            model=model or config.EXTRACTION_MODEL,
+            max_tokens=60 * len(batch) + 200, temperature=0.1,
+        )
+        senses = (data or {}).get("senses")
+        if isinstance(senses, dict):
+            for k, v in senses.items():
+                if isinstance(v, list):
+                    out[str(k)] = [str(x).strip() for x in v if str(x).strip()]
+    # A word we asked about and heard nothing back for is treated as single-sense,
+    # so it is never asked about again.
+    return {lemma: out.get(lemma, []) for lemma in lemmas}
+
+
+def fetch_senses_in_context(items: list[dict[str, Any]], *, provider: LLMProvider,
+                            model: Optional[str] = None) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for start in range(0, len(items), _MAX_GLOSS_BATCH):
+        batch = items[start:start + _MAX_GLOSS_BATCH]
+        user = "\n".join(
+            f"{n}. word: {it['word']} | line: {it['line']} | taught: "
+            + "; ".join(f"[{j}] {g}" for j, g in enumerate(it["deck_senses"]))
+            for n, it in enumerate(batch))
+        data = provider.complete_json(
+            system=SENSE_SYSTEM, user=user, model=model or config.EXTRACTION_MODEL,
+            max_tokens=70 * len(batch) + 200, temperature=0.1,
+        )
+        for row in (data or {}).get("items") or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                n = int(row.get("i"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= n < len(batch):
+                out[start + n] = {"sense": str(row.get("sense", "")).strip(),
+                                  "deck_index": int(row.get("deck_index", -1))}
+    return out
+
+
+def disambiguate(lines: list[Line], *, provider: Optional[LLMProvider] = None,
+                 model: Optional[str] = None) -> None:
+    """Resolve homographs against the line they appear in, in place.
+
+    Applies whatever is already cached even with no provider, so the cheap
+    `translate=False` path — the one the add-a-card decision runs on — sees the same
+    answer the learner saw on screen instead of contradicting it."""
+    if not config.SENSE_CHECK:
+        return
+    # Every word, not only the ones the deck claims. An unknown word's gloss is
+    # cached by lemma across every video, so without this 배 keeps whichever meaning
+    # it was first met with — the same error as trusting the deck's sense, one layer
+    # further down.
+    candidates = [(line, tok) for line in lines for tok in line.tokens if tok.lemma]
+    if not candidates:
+        return
+    cache = load_sense_cache()
+    poly, ctx = cache["poly"], cache["ctx"]
+    dirty = False
+
+    unasked = sorted({t.lemma for _, t in candidates if t.lemma not in poly})
+    if unasked and provider is not None:
+        try:
+            poly.update(fetch_polysemy(unasked, provider=provider, model=model))
+            dirty = True
+        except Exception:
+            pass
+
+    pending: list[dict[str, Any]] = []
+    slots: list[tuple[Line, Token, str]] = []
+    for line, tok in candidates:
+        # More than one meaning in the deck is ambiguity we can see without asking.
+        ambiguous = len(tok.deck_senses) > 1 or len(poly.get(tok.lemma, [])) > 1
+        if not ambiguous:
+            continue
+        key = f"{tok.lemma}\t{line.text}"
+        if key in ctx:
+            _apply_sense(tok, ctx[key])
+        else:
+            slots.append((line, tok, key))
+            pending.append({"word": tok.surface, "line": line.text,
+                            "deck_senses": tok.deck_senses})
+
+    if pending and provider is not None:
+        try:
+            answers = fetch_senses_in_context(pending, provider=provider, model=model)
+        except Exception:
+            answers = {}
+        for i, (_line, tok, key) in enumerate(slots):
+            if i in answers:
+                ctx[key] = answers[i]
+                _apply_sense(tok, answers[i])
+                dirty = True
+
+    if dirty:
+        save_sense_cache({"poly": poly, "ctx": ctx})
+
+
+def _apply_sense(tok: Token, answer: dict[str, Any]) -> None:
+    idx = answer.get("deck_index", -1)
+    sense = str(answer.get("sense", "")).strip()
+    if not tok.deck_senses:
+        # A word the deck does not have: nothing to contradict, just gloss it the way
+        # it is used here rather than the way it was used in the first line it ever
+        # appeared in.
+        tok.gloss_en = sense or tok.gloss_en
+        return
+    if isinstance(idx, int) and 0 <= idx < len(tok.deck_senses):
+        tok.gloss_en = tok.deck_senses[idx]      # the taught meaning, and it fits
+        return
+    # The word is in the deck, but not with this meaning — which is not knowing it.
+    # Downgrading also makes it count as an unknown neighbour, so a line resting on
+    # a sense the learner has never met stops qualifying for a cloze.
+    taught = ", ".join(tok.deck_senses)
+    tok.status = "new"
+    tok.gloss_en = sense or tok.gloss_en
+    if taught:
+        tok.note = f"your deck teaches {taught} — here it means {sense or 'something else'}"
+
+
 # --- the whole job -------------------------------------------------------
 
 def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
@@ -296,18 +494,22 @@ def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
             other = [c for c in (tok.display, tok.lemma) if c in forms]
             if exact:
                 tok.status = "known"
-                gloss = next((forms[c] for c in exact if forms[c]), "")
+                senses = [g for c in exact for g in forms[c]]
             elif other or tok.lemma in lemma_glosses:
                 tok.status = "derived"
-                gloss = next((forms[c] for c in other if forms[c]),
-                             lemma_glosses.get(tok.lemma, ""))
+                senses = ([g for c in other for g in forms[c]]
+                          or list(lemma_glosses.get(tok.lemma, [])))
             else:
-                tok.status, gloss = "new", ""
-            # A note with no English side leaves the gloss to be filled in below,
-            # rather than showing a coloured word with nothing behind it.
-            tok.gloss_en = gloss
+                tok.status, senses = "new", []
+            # Every meaning the deck teaches for this word, kept so a homograph can
+            # be resolved against the line below. A note with no English side leaves
+            # the gloss to be filled in later, rather than showing a coloured word
+            # with nothing behind it.
+            tok.deck_senses = list(dict.fromkeys(s for s in senses if s))
+            tok.gloss_en = tok.deck_senses[0] if tok.deck_senses else ""
 
     if not translate or provider is None:
+        disambiguate(lines, provider=None)   # apply whatever is already cached
         return lines
 
     cache = load_gloss_cache()
@@ -333,6 +535,8 @@ def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
             for tok in line.tokens:
                 if not tok.gloss_en:
                     tok.gloss_en = cache.get(tok.lemma, "")
+
+    disambiguate(lines, provider=provider)
     return lines
 
 

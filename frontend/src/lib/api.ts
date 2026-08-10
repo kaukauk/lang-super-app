@@ -39,6 +39,10 @@ export type VocabToken = {
   start: number; end: number; surface: string; word: string; lemma: string;
   pos: string; display: string; gloss_en: string;
   status: "known" | "derived" | "new";
+  // Set when the word IS in the deck but carries a different meaning here, so the
+  // tooltip can say so rather than silently showing the wrong gloss.
+  deck_senses?: string[];
+  note?: string;
 };
 export type AnnotatedLine = { text: string; tokens: VocabToken[] };
 export type Chunk = { type: string; ko: string; en: string; gloss: string };
