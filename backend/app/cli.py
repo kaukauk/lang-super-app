@@ -35,7 +35,8 @@ def _targets_and_support(deck: str, limit: int = 15) -> tuple[list[str], list[st
     """Today's targets = the freshly-added (still 'new') cards; support = the rest
     of the known deck vocabulary."""
     targets = [c.front_ko for c in srs.list_cards(deck_name=deck) if c.state == "new"][:limit]
-    support = sorted(srs.known_surface_forms(deck_name=deck) - set(targets))
+    support = sorted(srs.known_surface_forms(deck_name=deck, seen_only=True)
+                     - set(targets))
     return targets, support
 
 
@@ -158,7 +159,7 @@ def cmd_spar(args):
 
 def cmd_harvest(args):
     history = sparring.session_history(args.session)
-    known = srs.known_surface_forms(deck_name=args.deck)
+    known = srs.known_surface_forms(deck_name=args.deck, seen_only=True)
     chunks = sparring.harvest_chunks(history=history, provider=_provider(args), known=known)
     out: dict[str, Any] = {"chunks": [c.as_dict() for c in chunks]}
     if args.accept:

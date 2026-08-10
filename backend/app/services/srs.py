@@ -152,12 +152,17 @@ def list_cards(*, deck_name: str = "Korean") -> list[Card]:
         ).all())
 
 
-def known_surface_forms(*, deck_name: str = "Korean") -> set[str]:
+def known_surface_forms(*, deck_name: str = "Korean",
+                        seen_only: bool = False) -> set[str]:
     """Delegates to Anki — see services/known.py.
+
+    `seen_only` asks the narrower question: not "does a card for this exist" but
+    "has this ever come up in review". Which one a caller wants depends on what it
+    is deciding — see the two call sites in main.py.
 
     Kept at this name so the many callers keep one import, but the app's own Card
     table is no longer consulted: two stores of the same thing drift apart, and Anki
     is the master. It is also where the real vocabulary is — thousands of notes,
     against the handful this table ever held."""
     from . import known
-    return known.known_surface_forms(deck_name)
+    return known.known_surface_forms(deck_name, seen_only=seen_only)

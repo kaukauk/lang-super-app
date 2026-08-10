@@ -31,8 +31,12 @@ _BOLD = re.compile(r"<b>(.*?)</b>", re.IGNORECASE | re.DOTALL)
 _BATCH = 500
 
 
-def cache_path() -> Path:
-    return Path(config.MEDIA_CACHE_DIR) / "known_forms.json"
+def cache_path(seen_only: bool = False) -> Path:
+    # Separate files: the two readings of "known" differ by thousands of forms here,
+    # and one overwriting the other's cache would hand a caller the wrong answer the
+    # next time Anki happened to be closed.
+    name = "known_forms_seen.json" if seen_only else "known_forms.json"
+    return Path(config.MEDIA_CACHE_DIR) / name
 
 
 def strip_field(text: str) -> str:
@@ -86,11 +90,22 @@ def _is_korean_form(text: str) -> bool:
     return len(_HANGUL.findall(dense)) / len(dense) >= 0.5
 
 
+def deck_query(deck: str, seen_only: bool = False) -> str:
+    """The Anki search for a deck, optionally narrowed to cards already studied."""
+    query = f'deck:"{deck}"'
+    if seen_only and config.ANKI_SEEN_FILTER:
+        return f"{query} {config.ANKI_SEEN_FILTER}"
+    return query
+
+
 def fetch_from_anki(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] = None,
-                    ) -> set[str]:
-    """Every Korean surface form in `deck` and its subdecks."""
+                    seen_only: bool = False) -> set[str]:
+    """Every Korean surface form in `deck` and its subdecks.
+
+    `seen_only` narrows it to cards that have actually come up in review — see
+    `note_entries` for why the two readings are kept apart."""
     anki = anki or AnkiConnectClient()
-    note_ids = anki.invoke("findNotes", query=f'deck:"{deck}"') or []
+    note_ids = anki.invoke("findNotes", query=deck_query(deck, seen_only)) or []
     forms: set[str] = set()
     for i in range(0, len(note_ids), _BATCH):
         for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
@@ -111,10 +126,7 @@ def note_entries(deck: str = "Korean", *, anki: Optional[AnkiConnectClient] = No
     because a card for it exists somewhere would make the overlay describe the
     collection rather than the learner."""
     anki = anki or AnkiConnectClient()
-    query = f'deck:"{deck}"'
-    if seen_only and config.ANKI_SEEN_FILTER:
-        query = f"{query} {config.ANKI_SEEN_FILTER}"
-    note_ids = anki.invoke("findNotes", query=query) or []
+    note_ids = anki.invoke("findNotes", query=deck_query(deck, seen_only)) or []
     out: list[dict[str, Any]] = []
     for i in range(0, len(note_ids), _BATCH):
         for info in anki.invoke("notesInfo", notes=note_ids[i:i + _BATCH]) or []:
@@ -140,16 +152,16 @@ def _english_from_note(info: dict[str, Any]) -> str:
     return best
 
 
-def save_cache(forms: set[str], deck: str) -> None:
-    p = cache_path()
+def save_cache(forms: set[str], deck: str, seen_only: bool = False) -> None:
+    p = cache_path(seen_only)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"deck": deck, "fetched_at": time.time(),
                              "forms": sorted(forms)}, ensure_ascii=False),
                  encoding="utf-8")
 
 
-def load_cache(deck: str) -> Optional[set[str]]:
-    p = cache_path()
+def load_cache(deck: str, seen_only: bool = False) -> Optional[set[str]]:
+    p = cache_path(seen_only)
     if not p.exists():
         return None
     try:
@@ -162,14 +174,15 @@ def load_cache(deck: str) -> Optional[set[str]]:
 
 
 def known_surface_forms(deck: str = "Korean", *,
-                        anki: Optional[AnkiConnectClient] = None) -> set[str]:
+                        anki: Optional[AnkiConnectClient] = None,
+                        seen_only: bool = False) -> set[str]:
     """Known vocabulary from Anki, falling back to the last successful read.
 
     A failure here must not stop a build: returning an empty set would silently
     re-teach everything, so a stale cache is strictly better than none."""
     try:
-        forms = fetch_from_anki(deck, anki=anki)
-        save_cache(forms, deck)
+        forms = fetch_from_anki(deck, anki=anki, seen_only=seen_only)
+        save_cache(forms, deck, seen_only)
         return forms
     except Exception:
-        return load_cache(deck) or set()
+        return load_cache(deck, seen_only) or set()

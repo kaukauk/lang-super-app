@@ -481,7 +481,12 @@ def spar_turn(session_id: int, body: SparTurnBody) -> dict[str, Any]:
     if targets is None:
         targets = [c.front_ko for c in srs.list_cards(deck_name=body.deck)
                    if c.state == "new"][:15]
-    support = sorted(srs.known_surface_forms(deck_name=body.deck) - set(targets))
+    # Words the character is allowed to speak in, so seen-only: a card imported but
+    # never studied is not vocabulary the learner can follow, and listing it here is
+    # what makes sparring talk over their head. This is also the only list the
+    # 400-item truncation below ever threatened — the studied set is far smaller.
+    support = sorted(srs.known_surface_forms(deck_name=body.deck, seen_only=True)
+                     - set(targets))
     sess = sparring.get_session(session_id)
     role = sess.role_en if sess else ""
     scene = body.scene or (sess.scene_en if sess else "")
@@ -526,7 +531,10 @@ def spar_lookup(session_id: int, body: LookupBody) -> dict[str, Any]:
 @app.post("/api/spar/{session_id}/harvest")
 def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
     history = sparring.session_history(session_id)
-    known = srs.known_surface_forms(deck_name=body.deck)
+    # Drops harvested chunks the learner already knows. Seen-only for the same
+    # reason: a chunk is worth keeping if they cannot yet produce it, and an
+    # unstudied card is no evidence that they can.
+    known = srs.known_surface_forms(deck_name=body.deck, seen_only=True)
     corrections = sparring.session_corrections(session_id)
     lookups = sparring.session_lookups(session_id)
     chunks = sparring.harvest_chunks(history=history, provider=provider(), known=known,
