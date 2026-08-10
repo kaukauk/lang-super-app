@@ -3,6 +3,12 @@
 
 export type Video = {
   added_at?: string | null; id: number; youtube_id: string; title: string; duration_s: number };
+export type VideoDetail = {
+  id: number; youtube_id: string; title: string; duration_s: number;
+  source: string; playable: boolean;
+  series: string | null; season: number | null; episode: number | null;
+  part_label: string | null;
+};
 export type Segment = {
   id: number; day: number; start_s: number; end_s: number; is_full_review: boolean;
   done?: boolean;
@@ -100,6 +106,8 @@ export const api = {
   videos: () => req<Video[]>("/videos"),
   ingest: (body: { url?: string; path?: string; replace?: boolean }) =>
     req<{ video_id: number; n_study_segments: number; title?: string }>("/videos/ingest", post(body)),
+  video: (vid: number) => req<VideoDetail>(`/videos/${vid}`),
+  videoCues: (vid: number) => req<Cue[]>(`/videos/${vid}/cues`),
   segments: (vid: number) => req<Segment[]>(`/videos/${vid}/segments`),
   segment: (sid: number) => req<SegmentDetail>(`/segments/${sid}`),
   cues: (sid: number) => req<Cue[]>(`/segments/${sid}/cues`),
@@ -152,6 +160,7 @@ export const api = {
   annotate: (texts: string[]) =>
     req<{ lines: AnnotatedLine[] }>("/annotate", post({ texts })),
   addVocab: (body: { word: string; context_ko: string; gloss_en?: string;
-                     pos?: string; display?: string }) =>
-    req<{ pushed: number; skipped: number; deck: string }>("/vocab/add", post(body)),
+                     pos?: string; display?: string; start?: number }) =>
+    req<{ pushed: number; skipped: number; deck: string;
+          shape: "cloze" | "isolated"; blocked_by: string[] }>("/vocab/add", post(body)),
 };

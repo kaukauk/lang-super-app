@@ -29,7 +29,7 @@ export default function Watch() {
   const addWord = async (tok: VocabToken, line: string) => {
     const r = await api.addVocab({
       word: tok.word, context_ko: line, gloss_en: tok.gloss_en,
-      pos: tok.pos, display: tok.display,
+      pos: tok.pos, display: tok.display, start: tok.start,
     });
     setSaved((n) => n + r.pushed);
     return r;

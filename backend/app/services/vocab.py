@@ -29,7 +29,7 @@ from typing import Any, Iterable, Optional
 from .. import config
 from ..anki.chunks import ChunkNote
 from ..llm.client import LLMProvider
-from . import analyzer, chunkcards, known
+from . import analyzer, chunkcards, extraction, known
 
 # What gets a highlight. Deliberately narrower than analyzer.CONTENT_TAGS: numbers
 # (SN) are not vocabulary, and a learner does not need 3 glossed.
@@ -337,29 +337,75 @@ def annotate(texts: Iterable[str], *, provider: Optional[LLMProvider] = None,
 
 # --- one clicked word into Anki ------------------------------------------
 
+def unknown_neighbours(context_ko: str, *, start: Optional[int] = None,
+                       word: str = "", deck: str = "Korean", anki=None) -> list[str]:
+    """Words in the clicked word's own clause that the deck has never seen either.
+
+    Scoped to the clause rather than the sentence because that is the unit the
+    reader actually has to hold: "하지만 불의 제국이 전쟁을 일으켰고" being opaque
+    does not make the clause after it unreadable."""
+    lines = annotate([context_ko], translate=False, deck=deck, anki=anki)
+    tokens = lines[0].tokens if lines else []
+    if not tokens:
+        return []
+    here = next((t for t in tokens
+                 if (start is not None and t.start <= start < t.end)
+                 or (start is None and word and word in (t.word, t.surface))), None)
+    if here is None:
+        return []
+    lo, hi = next(((a, b) for a, b in extraction.clause_spans(context_ko)
+                   if a <= here.start < b), (0, len(context_ko)))
+    return [t.surface for t in tokens
+            if lo <= t.start < hi and t is not here and t.status == "new"]
+
+
 def add_to_anki(*, word: str, context_ko: str, gloss_en: str = "", pos: str = "",
-                display: str = "", anki=None, tts_provider=None,
-                deck: Optional[str] = None) -> dict[str, Any]:
-    """Turn a clicked subtitle word into a card.
+                display: str = "", start: Optional[int] = None, anki=None,
+                tts_provider=None, deck: Optional[str] = None,
+                known_deck: str = "Korean") -> dict[str, Any]:
+    """Turn a clicked subtitle word into a card — a cloze when the line supports
+    one, an isolated word card when it does not.
 
-    The same shape as a click-to-gloss card from sparring: the line is the chunk,
-    the clicked word is the blank, the English is back-only. The line comes for
-    free here and is the best possible context — it is the sentence the learner
-    just heard said aloud.
+    A cloze over the line is the better card: it drills the word where it was used,
+    with the sentence supplying the meaning instead of an English prompt. But that
+    only works if the rest of the clause is readable. With a second unknown word in
+    there the sentence stops being a cue and becomes a second thing to decode, and
+    failing the card no longer tells you which word you failed on.
 
-    For a verb the 아요/어요 form goes in as the anchor, so the card shows the
-    derivation (먹어요 -> 먹었어요) instead of leaving the conjugation unexplained."""
+    So when the clause has another word the deck has never seen, the card drops the
+    sentence entirely: a noun becomes Korean to English, and a verb becomes the form
+    on screen to its 아요/어요 form. Narrower, but answerable — and the sentence
+    version becomes worth making later, once the neighbours are known.
+
+    For a verb the 아요/어요 form goes in as the anchor either way, so the card shows
+    the derivation (먹어요 -> 먹었어요) instead of leaving the conjugation unexplained.
+    """
     word, context_ko = word.strip(), context_ko.strip()
+    display, gloss_en = display.strip(), gloss_en.strip()
     if not word or not context_ko:
         raise ValueError("a word and the line it came from are both required")
     predicate = pos in ("verb", "adjective")
-    note = ChunkNote(
-        chunk_ko=context_ko, blank_on=word, gloss_en=gloss_en.strip(),
-        anchor=display.strip() if predicate else "",
-        target_ko=word if predicate else "",
-        tags=["korean-chunk", "lookup", "subtitle"],
-    )
+    tags = ["korean-chunk", "lookup", "subtitle"]
+
+    blockers = unknown_neighbours(context_ko, start=start, word=word,
+                                  deck=known_deck, anki=anki)
+    if blockers:
+        # The word on its own. For a predicate that is the form as heard on one side
+        # and the polite form on the other; for a noun, the word and its English.
+        head = word if predicate else (display or word)
+        note = ChunkNote(chunk_ko=head, gloss_en=gloss_en,
+                         anchor=head if predicate else "",
+                         target_ko=display if predicate else "",
+                         tags=tags + ["isolated"])
+    else:
+        note = ChunkNote(chunk_ko=context_ko, blank_on=word, gloss_en=gloss_en,
+                         anchor=display if predicate else "",
+                         target_ko=word if predicate else "",
+                         tags=tags)
+
     out = chunkcards.push_notes([note], anki=anki, tts_provider=tts_provider, deck=deck)
+    out["shape"] = "isolated" if blockers else "cloze"
+    out["blocked_by"] = blockers
     invalidate_index()      # so the word reads as known on the very next line
     return out
 

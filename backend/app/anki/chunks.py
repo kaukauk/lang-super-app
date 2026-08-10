@@ -37,7 +37,8 @@ from .. import config
 # add-on from reading either side on its own. Every field here is either clean
 # Korean or pure notation, so audio can be generated from Chunk (or Anchor, or
 # Target) without a filter step.
-FIELDS = ["Prompt", "Chunk", "Context", "Ending", "Anchor", "Target", "Gloss", "Audio"]
+FIELDS = ["Prompt", "Chunk", "Answer", "Context", "Ending", "Anchor", "Target",
+          "Gloss", "Audio"]
 TEMPLATE_NAME = "Chunk Production"
 
 BLANK = "______"
@@ -178,10 +179,22 @@ class ChunkNote:
             return self.target_ko
         return predicate_span(self.chunk_ko, self.anchor) or self.chunk_ko
 
+    def answer(self) -> str:
+        """The back: the chunk resolved, with the word that was hidden in bold.
+
+        A separate field from Chunk rather than markup added to it, because Chunk is
+        the clean-Korean field everything else reads — TTS speaks it and the
+        duplicate check compares it, and neither wants <b> in the middle."""
+        blank = self.blank()
+        if not blank or blank not in self.chunk_ko:
+            return ""
+        return self.chunk_ko.replace(blank, f"<b>{blank}</b>", 1)
+
     def fields(self) -> dict[str, str]:
         return {
             "Prompt": build_prompt(self.chunk_ko, self.blank()),
             "Chunk": self.chunk_ko,
+            "Answer": self.answer(),
             "Context": self.context_ko,
             "Ending": self.ending,
             "Anchor": self.anchor,
@@ -191,28 +204,32 @@ class ChunkNote:
         }
 
 
+# No colours anywhere. The card takes Anki's own text and background, which is what
+# makes it readable in night mode — a fixed near-black on a fixed near-white is
+# exactly the combination Anki's dark theme leaves stranded, since it repaints the
+# background and not the CSS. Hierarchy comes from size and opacity instead, both of
+# which mean the same thing whatever colour the text is.
 _CSS = """.card {
   font-family: "Noto Sans KR", system-ui, sans-serif;
   font-size: 24px;
   text-align: center;
-  color: #1a1a1a;
-  background: #fbfbfb;
 }
 .chip {
-  display: inline-block; font-size: 15px; color: #4a5568;
-  background: #edf2f7; border-radius: 999px; padding: 3px 12px; margin-bottom: 14px;
+  display: inline-block; font-size: 15px; opacity: .75;
+  background: rgba(128,128,128,.18); border-radius: 999px; padding: 3px 12px;
+  margin-bottom: 14px;
 }
 .chunk { font-size: 30px; font-weight: 600; line-height: 1.6; }
 /* The line this answered. Small and above the prompt: it is the cue, not the task,
    and a Korean cue keeps retrieval inside the language. */
-.context { font-size: 17px; color: #a0aec0; margin-bottom: 12px; line-height: 1.4; }
+.context { font-size: 17px; opacity: .55; margin-bottom: 12px; line-height: 1.4; }
 /* Present only on cards born from a click-to-gloss lookup, where the learner did
    not know the meaning. Back only — never a translation prompt. */
-.gloss { font-size: 16px; color: #718096; margin-top: 14px; font-style: italic; }
-.prompt { font-size: 30px; font-weight: 600; line-height: 1.6; color: #2d3748; }
-.derivation { font-size: 18px; color: #718096; margin-top: 14px; }
-.arrow { margin: 0 8px; color: #a0aec0; }
-hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
+.gloss { font-size: 16px; opacity: .7; margin-top: 14px; font-style: italic; }
+.prompt { font-size: 30px; font-weight: 600; line-height: 1.6; }
+.derivation { font-size: 18px; opacity: .7; margin-top: 14px; }
+.arrow { margin: 0 8px; opacity: .6; }
+hr { border: none; border-top: 1px solid currentColor; opacity: .2; margin: 18px 0; }
 """
 
 # No English on either side, matching the KBA decks. The front is a production
@@ -231,7 +248,13 @@ _FRONT = """{{#Context}}<div class="context">{{Context}}</div>{{/Context}}
 # carries the (으) alternation that a single derived form never shows.
 #
 # Audio only on the back — on the front it would read the answer aloud.
-_BACK = """<div class="chunk">{{Chunk}}</div>
+#
+# Answer is the chunk with the hidden word bolded, so the eye lands on the thing
+# that was being recalled rather than re-reading the sentence to find it. Notes made
+# before that field existed — and cards with nothing hidden at all — fall back to
+# the plain chunk rather than showing an empty back.
+_BACK = """{{#Answer}}<div class="chunk">{{Answer}}</div>{{/Answer}}
+{{^Answer}}<div class="chunk">{{Chunk}}</div>{{/Answer}}
 {{#Anchor}}<div class="derivation"><span class="anchor">{{Anchor}}</span><span class="arrow">&rarr;</span><span class="target">{{Target}}</span></div>{{/Anchor}}
 {{#Gloss}}<div class="gloss">{{Gloss}}</div>{{/Gloss}}
 {{Audio}}

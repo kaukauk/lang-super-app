@@ -38,12 +38,17 @@ type Props = {
   // watched the moment it is imported rather than after a build step.
   seekTo?: number;
   stopAt?: number;
+  // Free viewing rather than a study day: a scrub bar and 10-second jumps. Off by
+  // default, because during a study day skipping ahead defeats the point of the
+  // fixed five minutes — the study pass is the same footage again, watched
+  // through, not scrubbed.
+  seekable?: boolean;
 };
 
 // Plays the locally-cut ~5-min snippet (frame-accurate, no scrubbing in blind mode)
 // with a Korean-subtitle overlay synced from the segment's cues.
 export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
-                                      seekTo, stopAt }: Props) {
+                                      seekTo, stopAt, seekable = false }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
@@ -81,6 +86,22 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
   // starts at the day's offset, so a bar measured from zero would open at 60%.
   const progress = dur ? Math.min(100, Math.max(0, ((time - (seekTo ?? 0)) / dur) * 100)) : 0;
   const toggle = () => { const v = vidRef.current; if (!v) return; v.paused ? v.play() : v.pause(); };
+  const elapsed = Math.max(0, time - (seekTo ?? 0));
+
+  // Both expressed in the file's own timeline, since that is what <video> wants,
+  // while everything shown to the viewer is relative to the start of the day.
+  const seekFraction = (f: number) => {
+    const v = vidRef.current;
+    if (!v || !seekable || !dur) return;
+    v.currentTime = (seekTo ?? 0) + Math.min(1, Math.max(0, f)) * dur;
+  };
+  const nudge = (delta: number) => {
+    const v = vidRef.current;
+    if (!v || !seekable) return;
+    const lo = seekTo ?? 0;
+    const hi = stopAt ?? (v.duration || Infinity);
+    v.currentTime = Math.min(hi, Math.max(lo, v.currentTime + delta));
+  };
 
   // Fullscreen the WRAPPER, not the <video>. Fullscreening the element itself
   // leaves the subtitle overlay behind, which is the whole point of study mode.
@@ -102,10 +123,13 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
       if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+      if (e.key === " ") { e.preventDefault(); toggle(); }
+      if (seekable && e.key === "ArrowLeft") { e.preventDefault(); nudge(-10); }
+      if (seekable && e.key === "ArrowRight") { e.preventDefault(); nudge(10); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [seekable, dur]);
 
   return (
     <div>
@@ -157,15 +181,20 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
           {full ? "⤢ Exit" : "⤢ Fullscreen"}
         </button>
 
-        {/* In fullscreen the play/pause row is off-screen, so blind mode would have
-            no way to pause at all — put one over the video. */}
+        {/* In fullscreen every control below the box is off-screen, so the whole
+            transport moves over the video — otherwise there would be no way to
+            pause, let alone seek, without leaving fullscreen first. */}
         {full && (
-          <button
-            onClick={toggle}
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-black/60 px-4 py-2 text-sm font-semibold text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
-          >
-            {playing ? "Pause" : "Play"}
-          </button>
+          <div className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-6 pb-4 pt-10 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
+            <button onClick={toggle}
+              className="rounded-lg bg-white/15 px-4 py-2 text-sm font-semibold text-white hover:bg-white/25">
+              {playing ? "Pause" : "Play"}
+            </button>
+            <Bar progress={progress} seekable={seekable} onSeek={seekFraction} dark />
+            <span className="tabular-nums text-sm text-white/80">
+              {fmt(elapsed)} / {fmt(dur)}
+            </span>
+          </div>
         )}
       </div>
 
@@ -191,11 +220,43 @@ export default function LocalPlayer({ src, baseS, mode, cues = [], onAddWord,
         <button onClick={toggle} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
           {playing ? "Pause" : "Play"}
         </button>
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
-          <div className="h-full bg-indigo-500" style={{ width: `${progress}%` }} />
-        </div>
-        <span className="tabular-nums text-sm text-neutral-500">{fmt(time)} / {fmt(dur)}</span>
+        {seekable && (
+          <>
+            <button onClick={() => nudge(-10)} title="Back 10s (←)"
+              className="rounded-lg border px-2.5 py-2 text-sm dark:border-neutral-700">↺ 10s</button>
+            <button onClick={() => nudge(10)} title="Forward 10s (→)"
+              className="rounded-lg border px-2.5 py-2 text-sm dark:border-neutral-700">10s ↻</button>
+          </>
+        )}
+        <Bar progress={progress} seekable={seekable} onSeek={seekFraction} />
+        <span className="tabular-nums text-sm text-neutral-500">{fmt(elapsed)} / {fmt(dur)}</span>
       </div>
+    </div>
+  );
+}
+
+// The progress bar, which is also the scrub bar when seeking is allowed. Clicking
+// is enough: a drag handle would be one more thing to hit precisely on a bar that
+// is mostly used to jump back a scene.
+function Bar({ progress, seekable, onSeek, dark = false }: {
+  progress: number; seekable: boolean; onSeek: (f: number) => void; dark?: boolean;
+}) {
+  return (
+    <div
+      onClick={(e) => {
+        if (!seekable) return;
+        const box = e.currentTarget.getBoundingClientRect();
+        onSeek((e.clientX - box.left) / box.width);
+      }}
+      title={seekable ? "Click to jump" : undefined}
+      // Taller when it can be clicked: a 2px strip is a readout, and asking
+      // someone to hit one with a pointer is the difference between the two.
+      style={{ height: seekable ? 10 : 8 }}
+      className={`flex-1 overflow-hidden rounded-full ${seekable ? "cursor-pointer" : ""}
+        ${dark ? "bg-white/25" : "bg-neutral-200 dark:bg-neutral-800"}`}
+    >
+      <div className={`h-full rounded-full ${dark ? "bg-white" : "bg-indigo-500"}`}
+        style={{ width: `${progress}%` }} />
     </div>
   );
 }

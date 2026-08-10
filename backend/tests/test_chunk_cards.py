@@ -62,8 +62,8 @@ def test_no_english_on_either_side() -> None:
     # the chip narrows the front to one correct answer, so it belongs there; on the
     # back the full chunk already resolves the blank and the chip only restates
     assert "{{Ending}}" in front and "{{Ending}}" not in back
-    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Context", "Ending",
-                                       "Anchor", "Target", "Gloss", "Audio"]
+    assert payload["inOrderFields"] == ["Prompt", "Chunk", "Answer", "Context",
+                                       "Ending", "Anchor", "Target", "Gloss", "Audio"]
     # the arrow is template markup, not data: every field stays clean enough to
     # generate audio from without a filter step
     assert "&rarr;" in back and all("→" not in v for v in payload["inOrderFields"])
@@ -138,7 +138,7 @@ def test_reconcile_adds_missing_fields_and_drops_only_empty_ones() -> None:
         "KoreanChunk", payload=chunks.build_model_payload("KoreanChunk"))
     added = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldAdd"]
     removed = [r["params"]["fieldName"] for r in ft.requests if r["action"] == "modelFieldRemove"]
-    assert set(added) == {"Context", "Anchor", "Target", "Gloss", "Audio"}
+    assert set(added) == {"Answer", "Context", "Anchor", "Target", "Gloss", "Audio"}
     assert removed == ["Derivation"]          # Legacy survives: it holds data
 
 

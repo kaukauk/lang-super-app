@@ -161,29 +161,46 @@ function EpisodeCard({ ep, open, onToggle }: {
   ep: LibraryEpisode; open: boolean; onToggle: () => void;
 }) {
   const pct = ep.n_days ? (ep.n_done / ep.n_days) * 100 : 0;
+  // A div wrapping a button and a link, not one big button: "study this episode"
+  // and "just watch it" are different intentions and a link nested inside a button
+  // is not a thing the browser will honour.
   return (
-    <button onClick={onToggle}
+    <div
       className={`flex h-full flex-col rounded-xl border p-4 text-left transition
         ${open ? "border-indigo-500 ring-1 ring-indigo-500" : ep.complete
           ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20"
           : "border-neutral-200 bg-white hover:border-indigo-400 dark:border-neutral-800 dark:bg-neutral-900"}`}>
-      <div className="flex items-baseline gap-2">
-        <span className="font-semibold">{label(ep)}</span>
-        {ep.complete && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">✓ done</span>}
-        <span className="ml-auto text-xs text-neutral-400">{Math.round(ep.duration_s / 60)} min</span>
+      <button onClick={onToggle} className="flex-1 text-left">
+        <div className="flex items-baseline gap-2">
+          <span className="font-semibold">{label(ep)}</span>
+          {ep.complete && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">✓ done</span>}
+          <span className="ml-auto text-xs text-neutral-400">{Math.round(ep.duration_s / 60)} min</span>
+        </div>
+        {/* a split episode is missing footage — say which parts, so the jump isn't a surprise */}
+        {ep.part_label && (
+          <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">{ep.part_label}</span>
+        )}
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+          <div className={`h-full rounded-full ${ep.complete ? "bg-emerald-500" : "bg-indigo-500"}`}
+            style={{ width: `${pct}%` }} />
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">
+          {ep.n_done} / {ep.n_days} days{!ep.complete && ep.next_day ? ` · next: day ${ep.next_day}` : ""}
+        </p>
+      </button>
+      <div className="mt-3 flex items-center gap-3 border-t border-neutral-200 pt-2 text-xs dark:border-neutral-800">
+        <button onClick={onToggle} className="text-neutral-500 hover:underline">
+          {open ? "Hide day plan" : "Day plan"}
+        </button>
+        {/* Only local episodes: watching straight through means playing the file. */}
+        {ep.source === "local" && (
+          <Link to={`/episode/${ep.video_id}`}
+            className="ml-auto font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            ▶ Just watch
+          </Link>
+        )}
       </div>
-      {/* a split episode is missing footage — say which parts, so the jump isn't a surprise */}
-      {ep.part_label && (
-        <span className="mt-1 text-xs text-amber-600 dark:text-amber-400">{ep.part_label}</span>
-      )}
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
-        <div className={`h-full rounded-full ${ep.complete ? "bg-emerald-500" : "bg-indigo-500"}`}
-          style={{ width: `${pct}%` }} />
-      </div>
-      <p className="mt-2 text-xs text-neutral-500">
-        {ep.n_done} / {ep.n_days} days{!ep.complete && ep.next_day ? ` · next: day ${ep.next_day}` : ""}
-      </p>
-    </button>
+    </div>
   );
 }
 

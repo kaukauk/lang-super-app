@@ -121,6 +121,29 @@ def videos() -> list[dict[str, Any]]:
             for v in ingest.list_videos()]
 
 
+@app.get("/api/videos/{video_id}")
+def video_detail(video_id: int) -> dict[str, Any]:
+    """One video, enough to play it straight through outside the day plan."""
+    v = ingest.get_video(video_id)
+    if v is None:
+        raise HTTPException(404, "video not found")
+    return {"id": v.id, "youtube_id": v.youtube_id, "title": v.title,
+            "duration_s": v.duration_s, "source": v.source,
+            "playable": bool(v.source == "local" and v.local_path
+                             and Path(v.local_path).exists()),
+            "series": v.series, "season": v.season, "episode": v.episode,
+            "part_label": v.part_label}
+
+
+@app.get("/api/videos/{video_id}/cues")
+def video_cues(video_id: int) -> list[dict[str, Any]]:
+    """Every subtitle cue for the whole video, for watching it end to end."""
+    if ingest.get_video(video_id) is None:
+        raise HTTPException(404, "video not found")
+    cues = ingest.get_cues_in_range(video_id, 0.0, float("inf"))
+    return [{"start_s": c.start_s, "dur_s": c.dur_s, "text": c.text} for c in cues]
+
+
 @app.get("/api/library")
 def library_overview() -> dict[str, Any]:
     """Everything the library screen renders, in one request."""
@@ -325,6 +348,9 @@ class VocabAddBody(BaseModel):
     gloss_en: str = ""
     pos: str = ""
     display: str = ""
+    # Where the word sits in the line. The same word can occur twice, so the
+    # position is what identifies which clause the card is being judged against.
+    start: Optional[int] = None
 
 
 @app.post("/api/vocab/add")
@@ -333,7 +359,8 @@ def vocab_add(body: VocabAddBody) -> dict[str, Any]:
     try:
         return vocab.add_to_anki(word=body.word, context_ko=body.context_ko,
                                  gloss_en=body.gloss_en, pos=body.pos,
-                                 display=body.display, tts_provider=tts_provider())
+                                 display=body.display, start=body.start,
+                                 tts_provider=tts_provider())
     except Exception as exc:
         raise HTTPException(400, str(exc))
 

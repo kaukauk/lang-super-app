@@ -15,6 +15,12 @@ def fake_anki(notes: list[dict]) -> AnkiConnectClient:
     }))
 
 
+def _known(*forms: str) -> AnkiConnectClient:
+    """A deck holding exactly these forms, so a test can say which words are the
+    unknown ones."""
+    return fake_anki([{"Front": f, "Back": f"gloss of {f}"} for f in forms])
+
+
 def surfaces(text: str) -> list[str]:
     return [t.surface for t in vocab.tokenize(text)]
 
@@ -155,10 +161,10 @@ def test_a_model_failure_is_not_fatal() -> None:
 # --- the card a click makes ----------------------------------------------
 
 def test_a_clicked_word_becomes_a_cloze_over_its_own_line() -> None:
-    anki = fake_anki([])
     out = vocab.add_to_anki(word="먹었어요", context_ko="밥을 먹었어요", gloss_en="to eat",
-                            pos="verb", display="먹어요", anki=anki, tts_provider=_NoTTS())
-    assert out["pushed"] == 1
+                            pos="verb", display="먹어요", anki=_known("밥"),
+                            tts_provider=_NoTTS())
+    assert out["pushed"] == 1 and out["shape"] == "cloze"
     note = out["notes"][0]
     assert note["Chunk"] == "밥을 먹었어요"
     assert note["Prompt"] == "밥을 ______"      # the clicked word is the blank
@@ -169,9 +175,61 @@ def test_a_clicked_word_becomes_a_cloze_over_its_own_line() -> None:
 
 def test_a_clicked_noun_has_no_conjugation_derivation() -> None:
     out = vocab.add_to_anki(word="물을", context_ko="물을 마셔요", gloss_en="water",
-                            pos="noun", display="물", anki=fake_anki([]),
+                            pos="noun", display="물", anki=_known("물", "마셔요"),
                             tts_provider=_NoTTS())
     assert out["notes"][0]["Anchor"] == "" and out["notes"][0]["Target"] == ""
+
+
+def test_the_back_bolds_the_word_that_was_hidden() -> None:
+    out = vocab.add_to_anki(word="먹었어요", context_ko="밥을 먹었어요", gloss_en="to eat",
+                            pos="verb", display="먹어요", anki=_known("밥", "먹었어요"),
+                            tts_provider=_NoTTS())
+    note = out["notes"][0]
+    assert note["Answer"] == "밥을 <b>먹었어요</b>"
+    assert note["Chunk"] == "밥을 먹었어요"        # stays clean for TTS and dedupe
+
+
+# --- cloze only when the line can actually be read -----------------------
+
+def test_a_second_unknown_word_in_the_clause_drops_the_sentence() -> None:
+    """A cloze whose remaining words are also unknown is not a prompt — failing it
+    cannot tell you which word you failed on."""
+    out = vocab.add_to_anki(word="제국이", context_ko="제국이 전쟁을 일으켰고",
+                            gloss_en="empire", pos="noun", display="제국", start=0,
+                            anki=fake_anki([]), tts_provider=_NoTTS())
+    assert out["shape"] == "isolated"
+    assert sorted(out["blocked_by"]) == ["일으켰고", "전쟁"]
+    note = out["notes"][0]
+    assert note["Prompt"] == "제국" and note["Gloss"] == "empire"
+    assert note["Chunk"] == "제국"              # the sentence is gone entirely
+
+
+def test_an_isolated_verb_asks_for_its_polite_form() -> None:
+    out = vocab.add_to_anki(word="일으켰고", context_ko="제국이 전쟁을 일으켰고",
+                            gloss_en="to cause", pos="verb", display="일으켜요",
+                            start=8, anki=fake_anki([]), tts_provider=_NoTTS())
+    assert out["shape"] == "isolated"
+    note = out["notes"][0]
+    assert note["Prompt"] == "일으켰고"
+    assert note["Anchor"] == "일으켰고" and note["Target"] == "일으켜요"
+
+
+def test_a_readable_line_still_gets_the_cloze() -> None:
+    out = vocab.add_to_anki(word="먹었어요", context_ko="밥을 먹었어요", gloss_en="to eat",
+                            pos="verb", display="먹어요", start=3,
+                            anki=_known("밥"), tts_provider=_NoTTS())
+    assert out["shape"] == "cloze"
+    assert out["notes"][0]["Prompt"] == "밥을 ______"
+
+
+def test_only_the_clicked_word_s_own_clause_counts() -> None:
+    """An opaque first clause does not make the second one unreadable — that is why
+    the check is per clause and not per sentence."""
+    line = "불의 제국이 전쟁을 일으켰고 밥을 먹었어요"
+    out = vocab.add_to_anki(word="먹었어요", context_ko=line, gloss_en="to eat",
+                            pos="verb", display="먹어요", start=line.index("먹었어요"),
+                            anki=_known("밥"), tts_provider=_NoTTS())
+    assert out["shape"] == "cloze" and out["blocked_by"] == []
 
 
 class _NoTTS:

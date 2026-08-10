@@ -63,7 +63,7 @@ type Props = {
   text: string;
   full: boolean;
   tokens?: VocabToken[];
-  onAdd?: (token: VocabToken, line: string) => Promise<unknown>;
+  onAdd?: (token: VocabToken, line: string) => Promise<{ shape?: string } | void>;
 };
 
 export default function SubtitleOverlay({ text, full, tokens = [], onAdd }: Props) {
@@ -72,8 +72,10 @@ export default function SubtitleOverlay({ text, full, tokens = [], onAdd }: Prop
   const [hover, setHover] = useState<number | null>(null);
   const [pending, setPending] = useState<number | null>(null);
   // Keyed by word rather than by index: the same word turning green everywhere it
-  // appears is the honest result of having just made a card for it.
-  const [added, setAdded] = useState<Record<string, true>>({});
+  // appears is the honest result of having just made a card for it. The value is
+  // what to say about the card, since a word whose line was too hard for a cloze
+  // gets a plain word card instead and that is worth knowing.
+  const [added, setAdded] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, string>>({});
   const ref = useRef<HTMLDivElement>(null);
   const origin = useRef<{ px: number; py: number; start: Pos; moved: boolean } | null>(null);
@@ -123,8 +125,12 @@ export default function SubtitleOverlay({ text, full, tokens = [], onAdd }: Prop
     if (draggedRef.current || !onAdd || added[tok.word] || pending !== null) return;
     setPending(i);
     try {
-      await onAdd(tok, text);
-      setAdded((a) => ({ ...a, [tok.word]: true }));
+      const made = await onAdd(tok, text);
+      setAdded((a) => ({
+        ...a,
+        [tok.word]: made && made.shape === "isolated"
+          ? "added as a word card ✓" : "added to Anki ✓",
+      }));
       setFailed((f) => { const { [tok.word]: _drop, ...rest } = f; return rest; });
     } catch (err) {
       setFailed((f) => ({ ...f, [tok.word]: String(err) }));
@@ -169,7 +175,7 @@ export default function SubtitleOverlay({ text, full, tokens = [], onAdd }: Prop
             token={piece}
             active={hover === i}
             pending={pending === i}
-            added={!!added[piece.word]}
+            added={added[piece.word]}
             error={failed[piece.word]}
             clickable={!!onAdd}
             onEnter={() => setHover(i)}
@@ -198,7 +204,7 @@ function renderPieces(text: string, tokens: VocabToken[]): (string | VocabToken)
 }
 
 type WordProps = {
-  token: VocabToken; active: boolean; pending: boolean; added: boolean;
+  token: VocabToken; active: boolean; pending: boolean; added?: string;
   error?: string; clickable: boolean;
   onEnter: () => void; onLeave: () => void; onClick: () => void;
 };
@@ -222,7 +228,7 @@ function Word({ token, active, pending, added, error, clickable,
           {token.gloss_en && <span className="text-neutral-300"> — {token.gloss_en}</span>}
           <span className="block text-[0.85em] text-neutral-400">
             {error ? error.slice(0, 80)
-              : added ? "added to Anki ✓"
+              : added ? added
               : pending ? "adding…"
               : `${TONE_NOTE[token.status]}${clickable ? " · click to add" : ""}`}
           </span>

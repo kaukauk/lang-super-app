@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import Library from "./pages/Library";
 import Chunks from "./pages/Chunks";
 import Watch from "./pages/Watch";
+import Episode from "./pages/Episode";
 import Spar from "./pages/Spar";
 import Extract from "./pages/Extract";
 import Primer from "./pages/Primer";
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/primer/:sid" element={<Primer />} />
           <Route path="/check/:sid" element={<Check />} />
           <Route path="/watch/:sid" element={<Watch />} />
+          <Route path="/episode/:vid" element={<Episode />} />
           <Route path="/spar/:sid" element={<Spar />} />
         </Routes>
       </main>

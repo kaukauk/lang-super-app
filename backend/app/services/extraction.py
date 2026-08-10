@@ -328,6 +328,16 @@ def split_clauses(text: str) -> list[str]:
     token is short. Guarding by token length trades one error for the other.
 
     Returns [text] unchanged when there is no clean joint."""
+    return [text[a:b].strip() for a, b in clause_spans(text) if text[a:b].strip()]
+
+
+def clause_spans(text: str) -> list[tuple[int, int]]:
+    """The same split, as character ranges.
+
+    Offsets rather than strings because a caller that starts from a position in the
+    sentence — which word did you click — cannot get back to one from a list of
+    substrings: the same clause text can occur twice, and stripping has already
+    moved the boundaries."""
     if not text or not text.strip():
         return []
     morphs = [m for m in analyzer.analyze(text) if m.start >= 0]
@@ -339,14 +349,8 @@ def split_clauses(text: str) -> list[str]:
         # Don't strand a fragment on either side of the split.
         if len(head) >= _MIN_CLAUSE_CHARS and len(tail) >= _MIN_CLAUSE_CHARS:
             cuts.append(m.end)
-    if not cuts:
-        return [text]
-    clauses, prev = [], 0
-    for c in cuts:
-        clauses.append(text[prev:c].strip())
-        prev = c
-    clauses.append(text[prev:].strip())
-    return [c for c in clauses if c] or [text]
+    bounds = [0] + cuts + [len(text)]
+    return [(a, b) for a, b in zip(bounds, bounds[1:]) if b > a]
 
 
 def drillable_part(text: str) -> tuple[str, str]:
