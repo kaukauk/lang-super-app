@@ -15,7 +15,6 @@ export default function Episode() {
   const id = Number(vid);
   const [video, setVideo] = useState<VideoDetail | null>(null);
   const [cues, setCues] = useState<Cue[]>([]);
-  const [subs, setSubs] = useState(true);
   const [err, setErr] = useState("");
   const [added, setAdded] = useState(0);
 
@@ -52,31 +51,27 @@ export default function Episode() {
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={subs} onChange={(e) => setSubs(e.target.checked)}
-                className="h-4 w-4 accent-indigo-600" />
-              Korean subtitles
-            </label>
-            {cues.length === 0 && (
-              <span className="text-amber-600 dark:text-amber-400">
-                No subtitles stored for this episode.
-              </span>
-            )}
-            <span className="ml-auto text-neutral-500">
-              Space plays and pauses · ← → jump 10s · f for fullscreen
-            </span>
-          </div>
+          {cues.length === 0 && (
+            <p className="text-sm text-amber-600 dark:text-amber-400">
+              No subtitles stored for this episode.
+            </p>
+          )}
 
-          {/* No key on the mode: toggling subtitles must not restart the episode. */}
+          {/* Subtitles are a control inside the player (CC), not a checkbox on the
+              page: toggling them mid-episode is a viewing decision, and it must
+              not restart playback. */}
           <LocalPlayer
             src={api.streamUrl(video.id)} baseS={0} seekable
-            mode={subs ? "study" : "blind"}
-            cues={subs ? cues : []}
+            mode={cues.length ? "study" : "blind"}
+            cues={cues}
             onAddWord={addWord}
           />
 
-          {subs && (
+          <p className="text-sm text-neutral-500">
+            Space or K plays and pauses · ← → jump 10s · ↑ ↓ volume · M mute ·
+            C subtitles · F fullscreen · double-click the video for fullscreen
+          </p>
+          {cues.length > 0 && (
             <p className="text-sm text-neutral-500">
               Green words are already in your deck, orange ones you know in another
               form. Hover a word to read it, click it to make a card.
