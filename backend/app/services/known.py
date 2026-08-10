@@ -26,6 +26,7 @@ from .. import config
 from ..anki.connect import AnkiConnectClient
 
 _HANGUL = re.compile(r"[가-힣]")
+_BOLD = re.compile(r"<b>(.*?)</b>", re.IGNORECASE | re.DOTALL)
 # notesInfo on a few thousand notes is a large payload; ask in slices.
 _BATCH = 500
 
@@ -43,14 +44,26 @@ def strip_field(text: str) -> str:
 
 
 def _forms_from_note(info: dict[str, Any]) -> set[str]:
-    """Every Korean-bearing field value on a note.
+    """Every Korean-bearing field value on a note, plus any bolded span inside one.
 
     Field names differ per note type — Basic uses Front, KBA Conjugation uses
     Anchor/Target, ours uses Chunk — so select on content rather than maintaining a
-    per-model map that silently misses any note type added later."""
+    per-model map that silently misses any note type added later.
+
+    The bolded spans matter because a card whose Korean side is a whole sentence
+    otherwise contributes nothing: a sentence never equals a single word, so nothing
+    in it is ever recognised. Bold is the note pointing at the one word it is
+    actually about — on a mined cloze it is exactly the word that was clicked — and
+    without reading it, mining 제국 as a cloze would leave 제국 reading as new
+    forever, and blocking its neighbours' clozes forever with it."""
     out: set[str] = set()
     for value in (info.get("fields") or {}).values():
-        text = strip_field((value or {}).get("value", ""))
+        raw = (value or {}).get("value", "")
+        for span in _BOLD.findall(raw):
+            text = strip_field(span)
+            if _is_korean_form(text):
+                out.add(text)
+        text = strip_field(raw)
         if _is_korean_form(text):
             out.add(text)
     return out

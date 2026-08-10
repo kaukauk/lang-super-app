@@ -114,6 +114,22 @@ def test_a_sentence_note_does_not_gloss_its_every_word() -> None:
     assert "밥을 먹었어요" in index["forms"]
 
 
+def test_a_mined_cloze_makes_its_own_word_known() -> None:
+    """Without this the feature works against itself: a noun mined as a cloze
+    contributes only the sentence, so the word stays new forever — and keeps
+    blocking its neighbours' clozes forever with it. The bolded span on the back is
+    the note saying which word it is about."""
+    anki = fake_anki([{"Chunk": "하지만 제국이 컸어요",
+                       "Answer": "하지만 <b>제국이</b> 컸어요", "Gloss": "empire"}])
+    vocab.invalidate_index()
+    tok = vocab.annotate(["제국이 왔어요"], translate=False, anki=anki)[0].tokens[0]
+    assert tok.status == "known" and tok.gloss_en == "empire"
+    # and the same noun with a different particle is the derived case, not a miss
+    other = vocab.annotate(["제국은 왔어요"], translate=False, anki=anki)[0].tokens[0]
+    assert other.status == "derived"
+    vocab.invalidate_index()
+
+
 def test_anki_being_down_still_returns_words() -> None:
     """This runs while the learner is watching — a dead AnkiConnect must cost the
     colours, not the overlay."""
