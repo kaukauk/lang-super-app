@@ -112,6 +112,7 @@ export const api = {
     req<{ video_id: number; n_study_segments: number; title?: string }>("/videos/ingest", post(body)),
   video: (vid: number) => req<VideoDetail>(`/videos/${vid}`),
   videoCues: (vid: number) => req<Cue[]>(`/videos/${vid}/cues`),
+  downloadVideo: (vid: number) => req<VideoDetail>(`/videos/${vid}/download`, post({})),
   segments: (vid: number) => req<Segment[]>(`/videos/${vid}/segments`),
   segment: (sid: number) => req<SegmentDetail>(`/segments/${sid}`),
   cues: (sid: number) => req<Cue[]>(`/segments/${sid}/cues`),

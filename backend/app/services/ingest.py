@@ -142,6 +142,22 @@ def get_video(video_id: int) -> Optional[Video]:
         return s.get(Video, video_id)
 
 
+def set_local_file(video_id: int, path: str) -> Optional[Video]:
+    """Point a video at a file on disk, so it plays without the YouTube embed.
+
+    The youtube_id stays as it is: it is the identity column and the media cache is
+    keyed by it, so changing it here would orphan every clip already cut."""
+    with db.session_scope() as s:
+        v = s.get(Video, video_id)
+        if v is None:
+            return None
+        v.source = "local"
+        v.local_path = path
+        s.add(v)
+        s.flush()
+        return v
+
+
 def get_segments(video_id: int) -> list[Segment]:
     with db.session_scope() as s:
         return list(s.exec(

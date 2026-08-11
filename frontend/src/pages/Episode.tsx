@@ -22,6 +22,18 @@ export default function Episode() {
   const [cues, setCues] = useState<Cue[]>([]);
   const [err, setErr] = useState("");
   const [added, setAdded] = useState(0);
+  const [fetching, setFetching] = useState(false);
+
+  // Pull the video down so it plays as a file. The embed depends on youtube.com
+  // being reachable from the browser, and when it is not there is nothing the page
+  // can do about it — a copy on disk has no third-party dependency at all, and it
+  // is the same route the downloaded series already took.
+  const download = async () => {
+    setFetching(true); setErr("");
+    try { setVideo(await api.downloadVideo(id)); }
+    catch (e) { setErr(String(e)); }
+    finally { setFetching(false); }
+  };
 
   useEffect(() => {
     setVideo(null);
@@ -72,12 +84,25 @@ export default function Episode() {
               onAddWord={addWord}
             />
           ) : (
-            <Player
-              youtubeId={video.youtube_id} startS={0} endS={video.duration_s} seekable
-              mode={cues.length ? "study" : "blind"}
-              cues={cues}
-              onAddWord={addWord}
-            />
+            <>
+              <Player
+                youtubeId={video.youtube_id} startS={0} endS={video.duration_s} seekable
+                mode={cues.length ? "study" : "blind"}
+                cues={cues}
+                onAddWord={addWord}
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+                <span className="text-neutral-500">
+                  Playing through YouTube's embed. If it stays black, your browser is
+                  blocking their player — download it and it plays from here instead,
+                  with proper seeking.
+                </span>
+                <button onClick={download} disabled={fetching}
+                  className="ml-auto rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                  {fetching ? "Downloading…" : "Download for offline playback"}
+                </button>
+              </div>
+            </>
           )}
 
           <p className="text-sm text-neutral-500">

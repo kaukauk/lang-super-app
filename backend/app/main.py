@@ -145,6 +145,31 @@ def video_cues(video_id: int) -> list[dict[str, Any]]:
     return [{"start_s": c.start_s, "dur_s": c.dur_s, "text": c.text} for c in cues]
 
 
+@app.post("/api/videos/{video_id}/download")
+def video_download(video_id: int) -> dict[str, Any]:
+    """Fetch a YouTube video to disk so it plays as a local file.
+
+    The embed is a third-party frame: it needs youtube.com to load a player script
+    into the page, and anything that blocks that — a content blocker, a filtered
+    network — leaves a black rectangle nothing on our side can rescue. A downloaded
+    file has no such dependency, and it is the same path the whole series already
+    took, so it also brings real seeking and the subtitle overlay for free.
+
+    Idempotent: a video already on disk is returned as-is."""
+    v = ingest.get_video(video_id)
+    if v is None:
+        raise HTTPException(404, "video not found")
+    if v.source == "local" and v.local_path and Path(v.local_path).exists():
+        return video_detail(video_id)
+    from .services import media
+    try:
+        paths = media.ensure_video(v.youtube_id)
+    except Exception as exc:
+        raise HTTPException(400, f"download failed: {exc}")
+    ingest.set_local_file(video_id, str(paths.video))
+    return video_detail(video_id)
+
+
 @app.get("/api/library")
 def library_overview() -> dict[str, Any]:
     """Everything the library screen renders, in one request."""
