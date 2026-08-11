@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Cue, VocabToken } from "../lib/api";
 import { fmt } from "../lib/fmt";
 import { useAnnotations } from "../lib/useAnnotations";
+import PlayerControls from "./PlayerControls";
 import SubtitleOverlay from "./SubtitleOverlay";
 
 let apiReady: Promise<void> | null = null;
@@ -49,9 +50,14 @@ type Props = {
   mode: "blind" | "study";
   cues?: Cue[];
   onAddWord?: (token: VocabToken, line: string) => Promise<unknown>;
+  // Free viewing: our own chrome over the embed instead of a study day's fixed
+  // window. Same switch, same controls and same keys as the local player, so a
+  // YouTube video in the library behaves like a downloaded one.
+  seekable?: boolean;
 };
 
-export default function Player({ youtubeId, startS, endS, mode, cues = [], onAddWord }: Props) {
+export default function Player({ youtubeId, startS, endS, mode, cues = [], onAddWord,
+                                 seekable = false }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -60,6 +66,12 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
   const [playing, setPlaying] = useState(false);
   const [unit, setUnit] = useState<"line" | "sentence">("line");
   const [offset, setOffset] = useState(0); // +later, -earlier (seconds)
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [buffered, setBuffered] = useState(0);
+  const [subsOn, setSubsOn] = useState(true);
+  const [chrome, setChrome] = useState(true);
+  const hideTimer = useRef<any>(null);
 
   useEffect(() => {
     let interval: any;
@@ -73,7 +85,10 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
         videoId: youtubeId,
         playerVars: {
           start: Math.floor(startS),
-          controls: mode === "blind" ? 0 : 1,
+          // Never YouTube's own controls: in a study day they would allow skipping
+          // ahead, and in free viewing they would sit under our subtitle overlay
+          // and cover the words. Ours are drawn over the embed instead.
+          controls: 0,
           disablekb: 1, rel: 0, modestbranding: 1, cc_load_policy: 0,
         },
         events: { onStateChange: (e: any) => setPlaying(e.data === 1) },
@@ -84,6 +99,11 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
         const t = p.getCurrentTime();
         setTime(t);
         if (t >= endS) p.pauseVideo();
+        // The embed reports one fraction of the whole video rather than ranges,
+        // which is enough to shade the bar ahead of the playhead.
+        if (p.getVideoLoadedFraction && p.getDuration) {
+          setBuffered(p.getVideoLoadedFraction() * (p.getDuration() || 0) - startS);
+        }
       }, 150);
     });
     return () => {
@@ -102,7 +122,8 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
   // Annotated up front for the whole day, so a word is already live the moment its
   // line appears. Study mode only — blind mode shows no subtitles to hover.
   const texts = useMemo(() => items.map((b) => b.text), [items]);
-  const annotations = useAnnotations(texts, mode === "study");
+  const showSubs = mode === "study" && (!seekable || subsOn);
+  const annotations = useAnnotations(texts, showSubs);
   // +offset = subtitles appear later; -offset = earlier.
   const t = time - offset;
   // Show the most recently STARTED caption and switch the instant the next one
@@ -122,7 +143,37 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
     return t < visibleUntil ? cur : undefined;
   }, [items, t]);
 
-  const progress = Math.min(100, Math.max(0, ((time - startS) / (endS - startS)) * 100));
+  const dur = Math.max(0, endS - startS);
+  const elapsed = Math.max(0, time - startS);
+  const progress = dur ? Math.min(100, Math.max(0, (elapsed / dur) * 100)) : 0;
+
+  const toggle = () =>
+    playing ? playerRef.current?.pauseVideo() : playerRef.current?.playVideo();
+  const seekSeconds = (seconds: number) => {
+    const p = playerRef.current;
+    if (!p?.seekTo || !seekable) return;
+    p.seekTo(startS + Math.min(dur, Math.max(0, seconds)), true);
+  };
+  const nudge = (delta: number) => seekSeconds(elapsed + delta);
+  const applyVolume = (vol: number, mute: boolean) => {
+    const p = playerRef.current;
+    setVolume(vol); setMuted(mute);
+    if (!p?.setVolume) return;
+    p.setVolume(Math.round(vol * 100));
+    mute ? p.mute?.() : p.unMute?.();
+  };
+
+  // Chrome hides a couple of seconds into playback and returns on any movement.
+  const wake = useCallback(() => {
+    setChrome(true);
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setChrome(false), 2500);
+  }, []);
+  useEffect(() => {
+    if (!playing) { clearTimeout(hideTimer.current); setChrome(true); return; }
+    wake();
+    return () => clearTimeout(hideTimer.current);
+  }, [playing, wake]);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) { document.exitFullscreen(); return; }
@@ -141,41 +192,82 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
-      if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+      const k = e.key.toLowerCase();
+      if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+      if (!seekable) return;
+      if (e.key === " " || k === "k") { e.preventDefault(); toggle(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); nudge(-10); }
+      if (e.key === "ArrowRight") { e.preventDefault(); nudge(10); }
+      if (e.key === "ArrowUp") { e.preventDefault(); applyVolume(Math.min(1, volume + 0.1), false); }
+      if (e.key === "ArrowDown") { e.preventDefault(); applyVolume(Math.max(0, volume - 0.1), muted); }
+      if (k === "m") { e.preventDefault(); applyVolume(volume, !muted); }
+      if (k === "c" && mode === "study") { e.preventDefault(); setSubsOn((o) => !o); }
+      wake();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [seekable, dur, elapsed, volume, muted, mode, playing, wake]);
 
   return (
     <div>
       <div ref={boxRef}
-        className={`group relative w-full overflow-hidden bg-black ${full ? "h-screen" : "aspect-video rounded-xl"}`}>
+        onPointerMove={seekable ? wake : undefined}
+        className={`group relative w-full overflow-hidden bg-black
+          ${full ? "h-screen" : "aspect-video rounded-xl"}
+          ${seekable && !chrome ? "cursor-none" : ""}`}>
         <div ref={hostRef} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />
+
+        {/* The iframe swallows pointer events, so click-to-pause needs a surface of
+            our own over it. Below the subtitle overlay and the controls, which both
+            need their own clicks. */}
+        {seekable && (
+          <div className="absolute inset-0 z-10"
+            onClick={toggle} onDoubleClick={toggleFullscreen} />
+        )}
+
         {/* Fullscreen the wrapper, not the iframe: the subtitle overlay and the
-            blind-mode control shade are ours, and fullscreening the iframe would
-            hand the screen to YouTube's own player and leave them behind. */}
-        <button
-          onClick={toggleFullscreen}
-          title={full ? "Exit fullscreen (f)" : "Fullscreen (f)"}
-          className="absolute right-3 top-3 z-10 rounded-lg bg-black/60 px-3 py-1.5 text-sm text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
-        >
-          {full ? "⤢ Exit" : "⤢ Fullscreen"}
-        </button>
-        {mode === "blind" && (
+            controls are ours, and fullscreening the iframe would hand the screen to
+            YouTube's own player and leave them behind. */}
+        {!seekable && (
+          <button
+            onClick={toggleFullscreen}
+            title={full ? "Exit fullscreen (f)" : "Fullscreen (f)"}
+            className="absolute right-3 top-3 z-20 rounded-lg bg-black/60 px-3 py-1.5 text-sm text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
+          >
+            {full ? "⤢ Exit" : "⤢ Fullscreen"}
+          </button>
+        )}
+        {mode === "blind" && !seekable && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/30 to-transparent" />
         )}
-        {mode === "study" && active && (
+        {showSubs && active && (
           <SubtitleOverlay
             text={active.text} full={full}
             tokens={annotations[active.text]}
             onAdd={onAddWord}
           />
         )}
+
+        {seekable && (
+          <div className={`transition-opacity duration-200 ${chrome ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+            <PlayerControls
+              playing={playing} elapsed={elapsed} duration={dur} buffered={buffered}
+              volume={volume} muted={muted} full={full}
+              subtitles={mode === "study" ? subsOn : undefined}
+              onToggle={toggle}
+              onSeek={seekSeconds}
+              onNudge={nudge}
+              onVolume={(v) => applyVolume(v, false)}
+              onMute={() => applyVolume(volume, !muted)}
+              onSubtitles={() => setSubsOn((o) => !o)}
+              onFullscreen={toggleFullscreen}
+            />
+          </div>
+        )}
       </div>
 
       {/* Study-mode subtitle controls */}
-      {mode === "study" && (
+      {showSubs && (
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
           <div className="inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
             {(["line", "sentence"] as const).map((u) => (
@@ -196,21 +288,22 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
         </div>
       )}
 
-      {/* Our own transport (the only controls in blind mode) */}
-      <div className="mt-3 flex items-center gap-3">
-        <button
-          onClick={() => (playing ? playerRef.current?.pauseVideo() : playerRef.current?.playVideo())}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          {playing ? "Pause" : "Play"}
-        </button>
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
-          <div className="h-full bg-indigo-500" style={{ width: `${progress}%` }} />
+      {/* Free viewing carries its whole transport over the video; a study day keeps
+          the play/pause and read-only progress below it. */}
+      {!seekable && (
+        <div className="mt-3 flex items-center gap-3">
+          <button onClick={toggle}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+            {playing ? "Pause" : "Play"}
+          </button>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+            <div className="h-full bg-indigo-500" style={{ width: `${progress}%` }} />
+          </div>
+          <span className="tabular-nums text-sm text-neutral-500">
+            {fmt(elapsed)} / {fmt(dur)}
+          </span>
         </div>
-        <span className="tabular-nums text-sm text-neutral-500">
-          {fmt(time - startS)} / {fmt(endS - startS)}
-        </span>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import LocalPlayer from "../components/LocalPlayer";
+import Player from "../components/Player";
 import { api, type Cue, type VideoDetail, type VocabToken } from "../lib/api";
 
 // Just watch the episode. No day, no blind-then-study order, no marking anything
-// done — the whole file, seekable, subtitles on or off.
+// done — the whole thing, seekable, subtitles on or off.
+//
+// Local file or YouTube embed, identically: the transcript is in the database
+// either way, so the annotated subtitles, the hover glosses and the click-to-mine
+// all work the same. Only the surface underneath differs.
 //
 // Deliberately separate from the study day rather than a mode inside it: the day's
 // constraints (fixed five minutes, no scrubbing, blind pass first) are the method,
@@ -44,10 +49,9 @@ export default function Episode() {
         <span className="text-sm text-neutral-500">{Math.round(video.duration_s / 60)} min</span>
       </div>
 
-      {!video.playable ? (
+      {video.source === "local" && !video.playable ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          This one isn't a local file, so there is nothing to play here. Open it from
-          the library's day plan to watch it on YouTube.
+          The file for this episode is missing from disk, so there is nothing to play.
         </div>
       ) : (
         <>
@@ -60,12 +64,21 @@ export default function Episode() {
           {/* Subtitles are a control inside the player (CC), not a checkbox on the
               page: toggling them mid-episode is a viewing decision, and it must
               not restart playback. */}
-          <LocalPlayer
-            src={api.streamUrl(video.id)} baseS={0} seekable
-            mode={cues.length ? "study" : "blind"}
-            cues={cues}
-            onAddWord={addWord}
-          />
+          {video.playable ? (
+            <LocalPlayer
+              src={api.streamUrl(video.id)} baseS={0} seekable
+              mode={cues.length ? "study" : "blind"}
+              cues={cues}
+              onAddWord={addWord}
+            />
+          ) : (
+            <Player
+              youtubeId={video.youtube_id} startS={0} endS={video.duration_s} seekable
+              mode={cues.length ? "study" : "blind"}
+              cues={cues}
+              onAddWord={addWord}
+            />
+          )}
 
           <p className="text-sm text-neutral-500">
             Space or K plays and pauses · ← → jump 10s · ↑ ↓ volume · M mute ·

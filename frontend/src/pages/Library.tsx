@@ -189,13 +189,12 @@ function EpisodeCard({ ep, open, onToggle }: {
         </p>
       </button>
       <div className="mt-3 flex items-center gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-        {/* Only local episodes: watching straight through means playing the file. */}
-        {ep.source === "local" && (
-          <Link to={`/episode/${ep.video_id}`}
-            className="rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
-            ▶ Watch
-          </Link>
-        )}
+        {/* Local file or YouTube embed alike — the transcript is in the database
+            either way, so the annotated subtitles work the same in both. */}
+        <Link to={`/episode/${ep.video_id}`}
+          className="rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+          ▶ Watch
+        </Link>
         <button onClick={onToggle}
           className="ml-auto rounded-lg border px-3 py-1.5 text-sm text-neutral-600 hover:border-indigo-400 dark:border-neutral-700 dark:text-neutral-300">
           {open ? "Hide days" : "Study days"}
