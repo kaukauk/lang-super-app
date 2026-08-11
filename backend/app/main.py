@@ -557,6 +557,23 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
 
 # --- static frontend (mounted last so /api/* wins) ----------------------
 
+class SPAFiles(StaticFiles):
+    """Serve the built UI, caching the bundles but never the page that names them.
+
+    Vite fingerprints every asset, so those can be cached forever — but index.html
+    is what points at them, and it was going out with only an ETag. Without an
+    explicit Cache-Control a browser is free to guess a freshness lifetime and skip
+    revalidating, which it does: the app kept running an old bundle after a deploy,
+    and a feature that had shipped simply looked absent."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        immutable = path.startswith("assets/") and "." in path.rsplit("/", 1)[-1]
+        response.headers["cache-control"] = (
+            "public, max-age=31536000, immutable" if immutable else "no-cache")
+        return response
+
+
 _dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 if _dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")
+    app.mount("/", SPAFiles(directory=str(_dist), html=True), name="frontend")
