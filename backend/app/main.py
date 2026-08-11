@@ -13,6 +13,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 
 from . import config, db
@@ -558,16 +559,39 @@ def spar_harvest(session_id: int, body: HarvestBody) -> dict[str, Any]:
 # --- static frontend (mounted last so /api/* wins) ----------------------
 
 class SPAFiles(StaticFiles):
-    """Serve the built UI, caching the bundles but never the page that names them.
+    """Serve the built UI: client-side routes resolve, and the bundles cache but the
+    page that names them does not.
 
-    Vite fingerprints every asset, so those can be cached forever — but index.html
-    is what points at them, and it was going out with only an ETag. Without an
-    explicit Cache-Control a browser is free to guess a freshness lifetime and skip
-    revalidating, which it does: the app kept running an old bundle after a deploy,
+    Routing lives in the browser, so /episode/1 is not a file and StaticFiles
+    answered it with a 404. That only shows up on a FULL load of a deep link —
+    reloading the page, opening it in a new tab, sharing it — because an in-app
+    click never reaches the server. Anything that is not an API call or a real file
+    is a route, so it gets index.html and React Router takes it from there.
+
+    Vite fingerprints every asset, so those can be cached forever. index.html is
+    what points at them and was going out with only an ETag; without an explicit
+    Cache-Control a browser is free to guess a freshness lifetime and skip
+    revalidating, which it does — the app kept running an old bundle after a deploy,
     and a feature that had shipped simply looked absent."""
 
+    # Never answered with the app. A missing bundle is an absent file rather than a
+    # route, and returning HTML for it turns a cache miss into a parse error; an
+    # unrouted /api path is a client bug, and answering it 200 with a page hides
+    # that behind a JSON decode failure at the call site.
+    _NOT_ROUTES = ("assets/", "api/")
+
     async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
+        # A missing file RAISES here rather than returning a 404 response, so the
+        # fallback has to catch as well as check.
+        spa = not path.startswith(self._NOT_ROUTES)
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or not spa:
+                raise
+            response = await super().get_response("index.html", scope)
+        if response.status_code == 404 and spa:
+            response = await super().get_response("index.html", scope)
         immutable = path.startswith("assets/") and "." in path.rsplit("/", 1)[-1]
         response.headers["cache-control"] = (
             "public, max-age=31536000, immutable" if immutable else "no-cache")
