@@ -5,18 +5,45 @@ import { useAnnotations } from "../lib/useAnnotations";
 import PlayerControls from "./PlayerControls";
 import SubtitleOverlay from "./SubtitleOverlay";
 
+// YouTube's iframe API, loaded once per page. It can simply never arrive — a
+// content blocker, an offline machine, a DNS filter — and when it does not, the
+// old code awaited a promise that never settled and left a black box with a play
+// button that did nothing. Failing loudly is the whole point of the timeout: a
+// silent black rectangle is indistinguishable from a broken video, a broken
+// player and a broken network.
+const YT_API_TIMEOUT_MS = 10000;
+
 let apiReady: Promise<void> | null = null;
 function loadYT(): Promise<void> {
   if ((window as any).YT?.Player) return Promise.resolve();
   if (apiReady) return apiReady;
-  apiReady = new Promise((resolve) => {
-    (window as any).onYouTubeIframeAPIReady = () => resolve();
+  apiReady = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      apiReady = null;          // let a later mount try again
+      reject(new Error("YouTube's player script did not load — a content blocker "
+                       + "or network filter is the usual cause."));
+    }, YT_API_TIMEOUT_MS);
+    (window as any).onYouTubeIframeAPIReady = () => { clearTimeout(timer); resolve(); };
     const s = document.createElement("script");
     s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => {
+      clearTimeout(timer);
+      apiReady = null;
+      reject(new Error("YouTube's player script could not be fetched."));
+    };
     document.head.appendChild(s);
   });
   return apiReady;
 }
+
+// The embed's own failures, which otherwise surface as nothing at all.
+const YT_ERRORS: Record<number, string> = {
+  2: "YouTube rejected the video id.",
+  5: "The video cannot play in this embed.",
+  100: "The video has been removed or made private.",
+  101: "The owner does not allow this video to be embedded.",
+  150: "The owner does not allow this video to be embedded.",
+};
 
 type Block = { start_s: number; end_s: number; text: string };
 
@@ -71,11 +98,18 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
   const [buffered, setBuffered] = useState(0);
   const [subsOn, setSubsOn] = useState(true);
   const [chrome, setChrome] = useState(true);
+  const [ytError, setYtError] = useState("");
+  const [ready, setReady] = useState(false);
   const hideTimer = useRef<any>(null);
+  // Read by the poll below. A ref, not a dependency: the embed must not be torn
+  // down and rebuilt just because the end of the window moved.
+  const endRef = useRef(endS);
+  endRef.current = endS;
 
   useEffect(() => {
     let interval: any;
     let cancelled = false;
+    setYtError(""); setReady(false);
     loadYT().then(() => {
       if (cancelled || !hostRef.current) return;
       const inner = document.createElement("div");
@@ -90,28 +124,47 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
           // and cover the words. Ours are drawn over the embed instead.
           controls: 0,
           disablekb: 1, rel: 0, modestbranding: 1, cc_load_policy: 0,
+          // YouTube checks the embedding origin on the postMessage handshake it
+          // uses to talk back. Without this it can decline to answer, which shows
+          // up as a player that loads and then never reports itself ready.
+          origin: window.location.origin,
+          playsinline: 1,
         },
-        events: { onStateChange: (e: any) => setPlaying(e.data === 1) },
+        events: {
+          onReady: () => setReady(true),
+          onStateChange: (e: any) => setPlaying(e.data === 1),
+          onError: (e: any) => setYtError(
+            YT_ERRORS[e?.data] || `YouTube reported error ${e?.data}.`),
+        },
       });
       interval = setInterval(() => {
         const p = playerRef.current;
         if (!p?.getCurrentTime) return;
         const t = p.getCurrentTime();
         setTime(t);
-        if (t >= endS) p.pauseVideo();
+        // onReady is the normal signal, but a player that is plainly running is
+        // ready whatever it did or did not tell us — the overlay must never end up
+        // covering a video that works.
+        if (t > 0 || p.getPlayerState?.() > 0) setReady(true);
+        if (t >= endRef.current) p.pauseVideo();
         // The embed reports one fraction of the whole video rather than ranges,
         // which is enough to shade the bar ahead of the playhead.
         if (p.getVideoLoadedFraction && p.getDuration) {
           setBuffered(p.getVideoLoadedFraction() * (p.getDuration() || 0) - startS);
         }
       }, 150);
-    });
+    }).catch((e) => { if (!cancelled) setYtError(String(e.message || e)); });
     return () => {
       cancelled = true;
       clearInterval(interval);
       try { playerRef.current?.destroy(); } catch { /* noop */ }
     };
-  }, [youtubeId, startS, endS, mode]);
+    // ONLY the video and where it starts. `mode` was in here, and on this page it
+    // flips from blind to study the moment the captions finish loading — which
+    // destroyed a player that was still initialising and built a second one on top
+    // of it. The replacement never reported itself ready, so the embed sat black
+    // with a play button that did nothing.
+  }, [youtubeId, startS]);
 
   const lineBlocks = useMemo<Block[]>(
     () => cues.map((c) => ({ start_s: c.start_s, end_s: c.start_s + c.dur_s, text: c.text.trim() })),
@@ -216,6 +269,25 @@ export default function Player({ youtubeId, startS, endS, mode, cues = [], onAdd
           ${full ? "h-screen" : "aspect-video rounded-xl"}
           ${seekable && !chrome ? "cursor-none" : ""}`}>
         <div ref={hostRef} className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />
+
+        {/* A black rectangle says nothing. Say which of the three things went
+            wrong, and offer the one route that always works. */}
+        {(ytError || !ready) && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center text-sm text-white">
+            {ytError ? (
+              <>
+                <p className="max-w-md">{ytError}</p>
+                <a href={`https://www.youtube.com/watch?v=${youtubeId}`}
+                  target="_blank" rel="noreferrer"
+                  className="rounded-lg bg-white px-4 py-2 font-semibold text-neutral-900 hover:bg-neutral-200">
+                  Open on YouTube ↗
+                </a>
+              </>
+            ) : (
+              <p className="text-white/70">Loading the YouTube player…</p>
+            )}
+          </div>
+        )}
 
         {/* The iframe swallows pointer events, so click-to-pause needs a surface of
             our own over it. Below the subtitle overlay and the controls, which both
